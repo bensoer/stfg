@@ -27,10 +27,10 @@ type Flyer struct {
 	FlyerRunID  int   `json:"flyer_run_id"`
 	FlyerTypeID int   `json:"flyer_type_id"`
 
-	ValidFrom     string `json:"valid_from"`
-	ValidTo       string `json:"valid_to"`
-	AvailableFrom string `json:"available_from"`
-	AvailableTo   string `json:"available_to"`
+	ValidFrom     *string `json:"valid_from,omitempty"`
+	ValidTo       *string `json:"valid_to,omitempty"`
+	AvailableFrom *string `json:"available_from,omitempty"`
+	AvailableTo   *string `json:"available_to,omitempty"`
 
 	Premium bool `json:"premium"`
 
@@ -68,7 +68,7 @@ type FlyerItem struct {
 
 	Price string `json:"price,omitempty"`
 
-	CutoutImageURL string  `json:"cutout_image_url,omitempty"`
+	CutoutImageURL string  `json:"cutout_image_url"`
 	VideoURL       *string `json:"video_url,omitempty"`
 
 	ValidFrom   string `json:"valid_from"`

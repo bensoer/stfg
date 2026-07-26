@@ -100,6 +100,7 @@ func initConfig() {
 		viper.SetConfigName(".stfg")
 	}
 
+	viper.SetEnvPrefix("STFG")
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.

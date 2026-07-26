@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/h2non/gentleman"
+
+	"stfg/internal/reconciler/scrape"
 )
 
 type Client struct {
@@ -15,6 +17,78 @@ func NewClient() *Client {
 	return &Client{
 		base: gentleman.New(),
 	}
+}
+
+func (c *Client) GetRetailGroups(postalCode string) ([]scrape.RetailGroup, error) {
+	resp, err := c.GetFlyers(postalCode)
+	if err != nil {
+		return nil, err
+	}
+
+	rg := []scrape.RetailGroup{}
+	for _, flyer := range resp.Flyers {
+
+		storeResp, err := c.GetNearbyStores(flyer.ID, postalCode)
+		if err != nil {
+			return nil, err
+		}
+
+		rgl := []scrape.RetailGroupLocation{}
+		for _, store := range *storeResp {
+			rgl = append(rgl, scrape.RetailGroupLocation{
+				ID:         store.ID,
+				Address:    store.Address,
+				City:       store.City,
+				PostalCode: store.PostalCode,
+				Province:   store.Province,
+			})
+		}
+
+		validFrom := flyer.ValidFrom
+		if validFrom == nil {
+			validFrom = flyer.AvailableFrom
+		}
+
+		validTo := flyer.ValidTo
+		if validTo == nil {
+			validTo = flyer.AvailableTo
+		}
+
+		rg = append(rg, scrape.RetailGroup{
+			ID:        flyer.ID,
+			ValidFrom: *validFrom,
+			ValidTo:   *validTo,
+			Name:      flyer.Name,
+			Merchant:  flyer.Merchant,
+
+			Locations: rgl,
+		})
+	}
+
+	return rg, nil
+}
+
+func (c *Client) GetRetailGroupItems(retailGroupId int64) ([]scrape.RetailGroupItem, error) {
+	resp, err := c.GetFlyerItems(retailGroupId)
+	if err != nil {
+		return nil, err
+	}
+
+	rgis := []scrape.RetailGroupItem{}
+	for _, flyerItem := range *resp {
+		rgis = append(rgis, scrape.RetailGroupItem{
+			ID:             flyerItem.ID,
+			RetailGroupId:  retailGroupId,
+			Name:           flyerItem.Name,
+			Brand:          flyerItem.Brand,
+			Price:          flyerItem.Price,
+			CutoutImageURL: flyerItem.CutoutImageURL,
+			VideoURL:       flyerItem.VideoURL,
+		})
+	}
+
+	return rgis, nil
+
 }
 
 func (c *Client) GetFlyers(postalCode string) (*GetFlyersResponse, error) {

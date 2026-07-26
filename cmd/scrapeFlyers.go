@@ -4,9 +4,8 @@ Copyright © 2026 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"fmt"
-	"stfg/internal"
 	"stfg/internal/flipp"
+	"stfg/internal/reconciler/scrape"
 	"stfg/internal/storage"
 	"time"
 
@@ -27,10 +26,10 @@ var scrapeFlyersCmd = &cobra.Command{
 		zap.S().Info("Searching For Valid Deals For ", today.Format("2006-01-02"), " Near Postal Code: ", postalCode)
 
 		client := flipp.NewClient()
-
-		flyers, err := client.GetFlyers(postalCode)
+		storage, err := storage.NewJSONFileStorage()
 		if err != nil {
-			zap.S().Error("Error getting flyers: ", err)
+			zap.S().Error("Failed To Setup Storage System")
+			zap.S().Error(err)
 			return
 		}
 
@@ -48,60 +47,14 @@ var scrapeFlyersCmd = &cobra.Command{
 			"Rexall",
 		}
 
-		flyerIndex := map[int64]string{}
+		err = scrape.Reconcile(client, storage, scrape.ScrapeReconcilerOptions{
+			PostalCode:           postalCode,
+			RetailGroupWhiteList: validFlyers,
+		})
 
-		for _, f := range flyers.Flyers {
-			if !internal.Contains(validFlyers, f.Merchant) {
-				// If its not a merchant we care about, skip it
-				continue
-			}
-
-			availableFrom, err := internal.ParseDate(f.AvailableFrom)
-			if err != nil {
-				zap.S().Error("Error parsing available_from date: ", err)
-				continue
-			}
-
-			availableTo, err := internal.ParseDate(f.AvailableTo)
-			if err != nil {
-				zap.S().Error("Error parsing available_to date: ", err)
-				continue
-			}
-
-			if availableFrom.After(today) || availableTo.Before(today) {
-				// If the flyer is not available today, skip it
-				continue
-			}
-
-			fmt.Println(f.Merchant, "-", f.Name)
-
-			items, err := client.GetFlyerItems(f.ID)
-			if err != nil {
-				zap.S().Error("Error getting flyer items: ", err)
-				return
-			}
-			fmt.Println(" items:", len(*items))
-
-			stores, err := client.GetNearbyStores(f.ID, postalCode)
-			if err != nil {
-				zap.S().Error("Error getting nearby stores: ", err)
-				return
-			}
-			fmt.Println(" stores:", len(*stores))
-
-			flyerFileName := storage.FlyerFileName(f.ID)
-			if err := storage.SaveJSON(flyerFileName, items); err != nil {
-				zap.S().Error("Error saving flyer: ", err)
-				return
-			}
-			flyerIndex[f.ID] = fmt.Sprintf("%s/%s", f.Merchant, f.Name)
-
-		}
-
-		flyersIndexFile := storage.FlyersIndexFile()
-		if err := storage.SaveJSON(flyersIndexFile, flyerIndex); err != nil {
-			zap.S().Error("Error saving flyers index: ", err)
-			return
+		if err != nil {
+			zap.S().Error("Error Scraping Flyers")
+			zap.S().Error(err)
 		}
 
 	},
