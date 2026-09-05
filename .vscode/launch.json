@@ -1,6 +1,7 @@
 {
     "version": "0.2.0",
     "configurations": [
+        
         {
             "name": "Scrape Flyers CLI Debug",
             "type": "go",
@@ -9,10 +10,25 @@
             "program": "${workspaceFolder}/main.go", 
             "args": [
                 "scrape-flyers", 
-                "<postal code>", 
+                "v9r0k4", 
             ],
             "env": {},
             "console": "integratedTerminal"
-        }
+        },
+        {
+            "name": "Add Grocery CLI Debug",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/main.go", 
+            "args": [
+                "groceries", 
+                "add-grocery",
+                "milk" 
+            ],
+            "env": {},
+            "console": "integratedTerminal"
+        },
+
     ]
 }

@@ -80,6 +80,7 @@ func Reconcile(scrapeClient ScrapeClient, storageClient StorageClient, options S
 		// If it does not exist, add it!
 		if !storageClient.HasRetailGroup(retailGroup) {
 			log.Infof("Adding Retail Group \"%s - %s\" And Its Items", retailGroup.Merchant, retailGroup.Name)
+			err := storageClient.AddRetailGroup(retailGroup)
 			if err != nil {
 				return err
 			}
@@ -95,7 +96,10 @@ func Reconcile(scrapeClient ScrapeClient, storageClient StorageClient, options S
 					return err
 				}
 				if !hasRetailGroupItem {
-					storageClient.AddRetailGroupItem(retailGroupItem)
+					err := storageClient.AddRetailGroupItem(retailGroupItem)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}

@@ -14,6 +14,7 @@ type JSONFileStorage struct {
 }
 
 const RetailGroupIndexFileName string = "flyers_index.json"
+const GroceryFileName string = "groceries.json"
 
 func NewJSONFileStorage() (*JSONFileStorage, error) {
 	dir, err := CacheDir()
@@ -23,17 +24,58 @@ func NewJSONFileStorage() (*JSONFileStorage, error) {
 
 	// If path exists, already then we are good. Return object
 	path := filepath.Join(dir, RetailGroupIndexFileName)
-	if _, err := os.Stat(path); err == nil {
-		return &JSONFileStorage{}, nil
+	if _, err := os.Stat(path); err != nil {
+		// If path does not exist, create it
+		err = SaveJSON(RetailGroupIndexFileName, []string{})
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// If path does not exist, create it and then Return object
+	// Check the groceries.json file exists
+	path = filepath.Join(dir, GroceryFileName)
+	if _, err := os.Stat(path); err != nil {
+		// If path does not exist, create it
+		err = SaveJSON(GroceryFileName, []GroceryItem{})
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	err = SaveJSON(RetailGroupIndexFileName, []string{})
+	return &JSONFileStorage{}, nil
+}
+
+func (j *JSONFileStorage) GetAllGroceries() ([]GroceryItem, error) {
+	var g []GroceryItem
+	err := j.loadJSON(GroceryFileName, &g)
 	if err != nil {
 		return nil, err
 	}
-	return &JSONFileStorage{}, nil
+	return g, nil
+}
+
+func (j *JSONFileStorage) AddGrocery(grocery GroceryItem) error {
+	groceries, err := j.GetAllGroceries()
+	if err != nil {
+		return err
+	}
+	return j.saveJSON(GroceryFileName, append(groceries, grocery))
+}
+
+func (j *JSONFileStorage) RemoveGrocery(grocery GroceryItem) error {
+	groceries, err := j.GetAllGroceries()
+	if err != nil {
+		return err
+	}
+
+	groceriesToKeep := []GroceryItem{}
+	for _, existingGrocery := range groceries {
+		if existingGrocery.Name != grocery.Name {
+			groceriesToKeep = append(groceriesToKeep, existingGrocery)
+		}
+	}
+
+	return j.saveJSON(GroceryFileName, groceriesToKeep)
 }
 
 func (j *JSONFileStorage) retailGroupFileName(flyerID int64) string {
@@ -93,7 +135,7 @@ func (j *JSONFileStorage) AddRetailGroup(retailGroup scrape.RetailGroup) error {
 
 func (j *JSONFileStorage) AddRetailGroupItem(retailGroupItem scrape.RetailGroupItem) error {
 	rtgis, err := j.GetRetailGroupItems(retailGroupItem.RetailGroupId)
-	if err != nil {
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return j.saveJSON(j.retailGroupFileName(retailGroupItem.RetailGroupId), append(rtgis, retailGroupItem))

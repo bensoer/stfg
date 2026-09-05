@@ -44,3 +44,8 @@ type FlyerItem struct {
 	CutoutImageURL string  `json:"cutout_image_url,omitempty"`
 	VideoURL       *string `json:"video_url,omitempty"`
 }
+
+type GroceryItem struct {
+	Name      string    `json:"name"`
+	Embedding []float32 `json:"embedding"`
+}

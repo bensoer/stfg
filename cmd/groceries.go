@@ -15,6 +15,11 @@ func init() {
 	rootCmd.AddCommand(groceriesCmd)
 
 	groceriesCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if rootCmd.PersistentPreRunE != nil {
+			if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
+				return err
+			}
+		}
 		return storage.EnsureGroceryFileExists()
 	}
 }
