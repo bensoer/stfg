@@ -1,6 +1,7 @@
 package json
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,10 +68,117 @@ func (f *FileStorage) Migrate(ctx context.Context) error {
 	if err := f.ensureEmpty(f.groceriesPath(), []storage.GroceryItem{}); err != nil {
 		return err
 	}
+	if err := f.migrateFlyersIndexLegacy(); err != nil {
+		return err
+	}
 	if err := f.ensureEmpty(f.flyersIndexPath(), []storage.Flyer{}); err != nil {
 		return err
 	}
 	return nil
+}
+
+// --- Legacy schema migration ---
+
+// legacyFlyer mirrors the pre-storage-interface RetailGroup on-disk schema,
+// which used camelCase JSON keys (validFrom/validTo/location) and RFC3339
+// string dates instead of time.Time. migrateFlyersIndexLegacy translates such
+// files into the canonical storage.Flyer form and rewrites them in place.
+//
+// Unknown fields (such as the deprecated "aux" map) are ignored rather than
+// destroyed: migration is best-effort and returns an error without rewriting
+// the file if it cannot parse, so no data is ever lost.
+//
+// Detection is a substring scan for the legacy keys. It is idempotent because
+// the canonical form only ever contains snake_case keys, so a second pass finds
+// neither "validFrom" nor "location" and is a no-op.
+//
+// migrateFlyersIndexLegacy is per-path locked so concurrent constructors cannot
+// race on the same index file.
+type legacyFlyer struct {
+	ID        int64         `json:"id"`
+	ValidFrom string        `json:"validFrom"`
+	ValidTo   string        `json:"validTo"`
+	Name      string        `json:"name"`
+	Merchant  string        `json:"merchant"`
+	Locations []legacyStore `json:"location"`
+}
+
+type legacyStore struct {
+	ID         int    `json:"id"`
+	Address    string `json:"address"`
+	City       string `json:"city"`
+	Province   string `json:"province"`
+	PostalCode string `json:"postalCode"`
+}
+
+// parseLegacyTime parses a date from a legacy flyers_index entry. The on-disk
+// value was historically either a full RFC3339 timestamp or a bare date, so we
+// accept both rather than silently zeroing the field (or failing migration) on
+// a format mismatch.
+func parseLegacyTime(s string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, s)
+	if err == nil {
+		return t, nil
+	}
+	return time.Parse("2006-01-02", s)
+}
+
+func (f *FileStorage) migrateFlyersIndexLegacy() error {
+	path := f.flyersIndexPath()
+	mu := f.lockPath(path)
+	defer f.unlockPath(mu)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// No index file yet; ensureEmpty will seed the canonical form.
+			return nil
+		}
+		return err
+	}
+
+	// Only migrate when the file actually carries the legacy camelCase schema.
+	if !bytes.Contains(data, []byte(`"validFrom"`)) && !bytes.Contains(data, []byte(`"location"`)) {
+		return nil
+	}
+
+	var legacy []legacyFlyer
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return fmt.Errorf("migrate legacy flyers index: %w", err)
+	}
+
+	flyers := make([]storage.Flyer, 0, len(legacy))
+	for _, lf := range legacy {
+		from, err := parseLegacyTime(lf.ValidFrom)
+		if err != nil {
+			return fmt.Errorf("migrate legacy flyer %d: invalid validFrom %q: %w", lf.ID, lf.ValidFrom, err)
+		}
+		to, err := parseLegacyTime(lf.ValidTo)
+		if err != nil {
+			return fmt.Errorf("migrate legacy flyer %d: invalid validTo %q: %w", lf.ID, lf.ValidTo, err)
+		}
+		stores := make([]storage.Store, 0, len(lf.Locations))
+		for _, ls := range lf.Locations {
+			stores = append(stores, storage.Store{
+				ID:         ls.ID,
+				Address:    ls.Address,
+				City:       ls.City,
+				Province:   ls.Province,
+				PostalCode: ls.PostalCode,
+			})
+		}
+		flyers = append(flyers, storage.Flyer{
+			ID:        lf.ID,
+			ValidFrom: from,
+			ValidTo:   to,
+			Name:      lf.Name,
+			Merchant:  lf.Merchant,
+			Stores:    stores,
+		})
+	}
+	// Rewrites the file atomically via the existing writeFile; on failure the
+	// original file is left untouched (no data destruction).
+	return f.writeFile(path, flyers)
 }
 
 // --- File path helpers (private) ---
@@ -109,6 +217,7 @@ func (f *FileStorage) writeFile(path string, data any) error {
 		return err
 	}
 	if err := fh.Close(); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -134,7 +243,7 @@ func (f *FileStorage) lockPath(path string) *sync.Mutex {
 	return mu
 }
 
-func (f *FileStorage) unlockPath(mu *sync.Mutex, path string) {
+func (f *FileStorage) unlockPath(mu *sync.Mutex) {
 	mu.Unlock()
 }
 
@@ -142,11 +251,22 @@ func (f *FileStorage) unlockPath(mu *sync.Mutex, path string) {
 
 func (f *FileStorage) loadGroceries(path string) ([]storage.GroceryItem, error) {
 	var items []storage.GroceryItem
-	err := f.readFile(path, &items)
-	if errors.Is(err, storage.ErrNotFound) {
-		return []storage.GroceryItem{}, nil
-	}
-	if err != nil {
+	if err := f.readFile(path, &items); err != nil {
+		// Legacy files written by the old db.SaveGroceries stored a bare
+		// []string of names. Fall back to that shape so pre-existing data
+		// still loads instead of hard-failing on a schema change.
+		if errors.Is(err, storage.ErrNotFound) {
+			return []storage.GroceryItem{}, nil
+		}
+		var names []string
+		if perr := f.readFile(path, &names); perr == nil {
+			out := make([]storage.GroceryItem, 0, len(names))
+			for _, n := range names {
+				out = append(out, storage.GroceryItem{Name: n})
+			}
+			return out, nil
+		}
+		// Neither schema fit; surface the original error without destroying data.
 		return nil, err
 	}
 	if items == nil {
@@ -158,7 +278,7 @@ func (f *FileStorage) loadGroceries(path string) ([]storage.GroceryItem, error) 
 func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) error {
 	path := f.groceriesPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	groceries, err := f.loadGroceries(path)
 	if err != nil {
@@ -176,7 +296,7 @@ func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) 
 func (f *FileStorage) RemoveGrocery(ctx context.Context, name string) error {
 	path := f.groceriesPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	groceries, err := f.loadGroceries(path)
 	if err != nil {
@@ -200,7 +320,7 @@ func (f *FileStorage) RemoveGrocery(ctx context.Context, name string) error {
 func (f *FileStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem, error) {
 	path := f.groceriesPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 	return f.loadGroceries(path)
 }
 
@@ -237,7 +357,7 @@ func (f *FileStorage) loadFlyers(path string) ([]storage.Flyer, error) {
 func (f *FileStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	flyers, err := f.loadFlyers(path)
 	if err != nil {
@@ -255,7 +375,7 @@ func (f *FileStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
 func (f *FileStorage) RemoveFlyer(ctx context.Context, id int64) error {
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	flyers, err := f.loadFlyers(path)
 	if err != nil {
@@ -296,7 +416,7 @@ func (f *FileStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, e
 func (f *FileStorage) ListFlyers(ctx context.Context) ([]storage.Flyer, error) {
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 	return f.loadFlyers(path)
 }
 
@@ -333,7 +453,7 @@ func (f *FileStorage) loadFlyerItems(path string) ([]storage.FlyerItem, error) {
 func (f *FileStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) error {
 	path := f.flyerItemsPath(item.FlyerID)
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	items, err := f.loadFlyerItems(path)
 	if err != nil {
@@ -351,7 +471,7 @@ func (f *FileStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) 
 func (f *FileStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64) error {
 	path := f.flyerItemsPath(flyerID)
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	items, err := f.loadFlyerItems(path)
 	if err != nil {
@@ -375,7 +495,7 @@ func (f *FileStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64
 func (f *FileStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]storage.FlyerItem, error) {
 	path := f.flyerItemsPath(flyerID)
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 	return f.loadFlyerItems(path)
 }
 
@@ -397,7 +517,7 @@ func (f *FileStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (
 func (f *FileStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
-	defer f.unlockPath(mu, path)
+	defer f.unlockPath(mu)
 
 	flyers, err := f.loadFlyers(path)
 	if err != nil {

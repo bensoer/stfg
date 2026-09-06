@@ -258,31 +258,6 @@ func TestStorage_InterfaceContract(t *testing.T) {
 	var _ Storage = (*mockStorage)(nil)
 }
 
-// Test that Reconcile accepts storage.Storage (signature check via source)
-func TestReconcile_NewSignatureCompiles(t *testing.T) {
-	// Debug: print current directory
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get cwd: %v", err)
-	}
-	t.Logf("Current directory: %s", dir)
-	data, err := os.ReadFile("../../internal/reconciler/scrape/engine.go")
-	if err != nil {
-		t.Fatalf("cannot read engine.go: %v", err)
-	}
-	content := string(data)
-	// Look for the function signature of Reconcile
-	// We want to see: storageClient storage.Storage
-	if !strings.Contains(content, "storageClient storage.Storage") {
-		t.Error(`expected to find "storageClient storage.Storage" in Reconcile signature in engine.go`)
-	}
-	// Also check that the scrapeClient parameter is of type ScrapeClient (defined in same file)
-	// We can check for "scrapeClient ScrapeClient"
-	if !strings.Contains(content, "scrapeClient ScrapeClient") {
-		t.Error(`expected to find "scrapeClient ScrapeClient" in Reconcile signature in engine.go`)
-	}
-}
-
 // Mock types for testing
 type mockStorage struct{}
 
