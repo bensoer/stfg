@@ -342,7 +342,7 @@ func TestScrapeTypes_NoStorageClient(t *testing.T) {
 	}
 }
 
-func TestScrapeTypes_RetailGroupLocationKept(t *testing.T) {
+func TestScrapeTypes_RetailGroupLocationRemoved(t *testing.T) {
 	// Debug: print current directory
 	dir, err := os.Getwd()
 	if err != nil {
@@ -354,8 +354,8 @@ func TestScrapeTypes_RetailGroupLocationKept(t *testing.T) {
 		t.Fatalf("cannot read types.go: %v", err)
 	}
 	content := string(data)
-	if !strings.Contains(content, "type RetailGroupLocation") {
-		t.Error("type RetailGroupLocation should still be present in scrape/types.go")
+	if strings.Contains(content, "type RetailGroupLocation") {
+		t.Error("type RetailGroupLocation should not be present in scrape/types.go")
 	}
 	// Also check that the flipp client still references it (we can't check without reading flipp/client.go)
 	// For now, just check the types.go file.

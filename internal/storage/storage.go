@@ -11,11 +11,14 @@ import (
 var (
 	ErrNotFound        = errors.New("storage: not found")
 	ErrDuplicate       = errors.New("storage: duplicate")
+	// ErrInvalidArgument is reserved for future backend validation.
+	// Currently declared for interface completeness but not yet returned by any backend.
 	ErrInvalidArgument = errors.New("storage: invalid argument")
 )
 
 // Storage is the single contract every persistence backend must satisfy.
 // All methods take a context.Context so backends can support cancellation/timeouts.
+// Implementations must be safe for concurrent use within a single process.
 type Storage interface {
 	// Lifecycle
 	Close() error

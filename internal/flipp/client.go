@@ -7,6 +7,7 @@ import (
 	"github.com/h2non/gentleman"
 
 	"stfg/internal"
+	"stfg/internal/reconciler/scrape"
 	"stfg/internal/storage"
 )
 
@@ -197,3 +198,5 @@ func (c *Client) GetNearbyStores(flyerID int64, postalCode string) (*GetStoresNe
 
 	return &parsed, nil
 }
+
+var _ scrape.ScrapeClient = (*Client)(nil)

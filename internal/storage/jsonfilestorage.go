@@ -16,6 +16,7 @@ const RetailGroupIndexFileName string = "flyers_index.json"
 const GroceryFileName string = "groceries.json"
 
 func NewJSONFileStorage() (*JSONFileStorage, error) {
+	j := &JSONFileStorage{}
 	dir, err := CacheDir()
 	if err != nil {
 		return nil, err
@@ -25,7 +26,7 @@ func NewJSONFileStorage() (*JSONFileStorage, error) {
 	path := filepath.Join(dir, RetailGroupIndexFileName)
 	if _, err := os.Stat(path); err != nil {
 		// If path does not exist, create it
-		err = SaveJSON(RetailGroupIndexFileName, []string{})
+		err = j.saveJSON(RetailGroupIndexFileName, []string{})
 		if err != nil {
 			return nil, err
 		}
@@ -35,18 +36,18 @@ func NewJSONFileStorage() (*JSONFileStorage, error) {
 	path = filepath.Join(dir, GroceryFileName)
 	if _, err := os.Stat(path); err != nil {
 		// If path does not exist, create it
-		err = SaveJSON(GroceryFileName, []GroceryItem{})
+		err = j.saveJSON(GroceryFileName, []GroceryItem{})
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	return &JSONFileStorage{}, nil
+	return j, nil
 }
 
 func (j *JSONFileStorage) GetAllGroceries() ([]GroceryItem, error) {
 	var g []GroceryItem
-	err := j.loadJSON(GroceryFileName, &g)
+	err := j.readFile(GroceryFileName, &g)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +117,7 @@ func (j *JSONFileStorage) HasRetailGroupItem(retailGroupItem FlyerItem) (bool, e
 func (j *JSONFileStorage) AddRetailGroup(retailGroup Flyer) error {
 
 	var rtgs []Flyer
-	err := j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+	err := j.readFile(j.retailGroupsIndexFile(), &rtgs)
 	if err != nil {
 		return err
 	}
@@ -142,7 +143,7 @@ func (j *JSONFileStorage) AddRetailGroupItem(retailGroupItem FlyerItem) error {
 
 func (j *JSONFileStorage) GetRetailGroup(retailGroupId int64) (*Flyer, error) {
 	var rtgs []Flyer
-	err := j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+	err := j.readFile(j.retailGroupsIndexFile(), &rtgs)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +174,7 @@ func (j *JSONFileStorage) RemoveRetailGroup(retailGroup Flyer) error {
 
 	// Now remove the retail group
 	var rtgs []Flyer
-	err = j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+	err = j.readFile(j.retailGroupsIndexFile(), &rtgs)
 	if err != nil {
 		return err
 	}
@@ -209,7 +210,7 @@ func (j *JSONFileStorage) RemoveRetailGroupItem(retailGroupItem FlyerItem) error
 func (j *JSONFileStorage) GetRetailGroupItems(retailGroupId int64) ([]FlyerItem, error) {
 
 	var rtgis []FlyerItem
-	err := j.loadJSON(j.retailGroupFileName(retailGroupId), &rtgis)
+	err := j.readFile(j.retailGroupFileName(retailGroupId), &rtgis)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +220,7 @@ func (j *JSONFileStorage) GetRetailGroupItems(retailGroupId int64) ([]FlyerItem,
 
 func (j *JSONFileStorage) GetAllRetailGroups() ([]Flyer, error) {
 	var rtgs []Flyer
-	err := j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+	err := j.readFile(j.retailGroupsIndexFile(), &rtgs)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +247,7 @@ func (j *JSONFileStorage) saveJSON(filename string, data any) error {
 	return enc.Encode(data)
 }
 
-func (j *JSONFileStorage) loadJSON(filename string, out any) error {
+func (j *JSONFileStorage) readFile(filename string, out any) error {
 	dir, err := CacheDir()
 	if err != nil {
 		return err
@@ -256,7 +257,7 @@ func (j *JSONFileStorage) loadJSON(filename string, out any) error {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %s", err, filepath.Base(path))
 	}
 
 	return json.Unmarshal(data, out)

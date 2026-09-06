@@ -1,3 +1,6 @@
+// Package bolt provides a stub BoltDB backend that returns ErrNotImplemented
+// for all methods. It exists as a compile-time-checked placeholder for the
+// future BoltDB implementation (Plan 3).
 package bolt
 
 import (

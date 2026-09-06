@@ -1,3 +1,6 @@
+// Package sqlite provides a stub SQLite backend that returns ErrNotImplemented
+// for all methods. It exists as a compile-time-checked placeholder for the
+// future SQLite implementation (Plan 3).
 package sqlite
 
 import (
