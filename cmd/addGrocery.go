@@ -2,13 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
-
-	"stfg/internal/models"
-	"stfg/internal/storage"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+
+	"stfg/internal/models"
+	"stfg/internal/storage"
 )
 
 var addGroceryCmd = &cobra.Command{
@@ -17,31 +16,21 @@ var addGroceryCmd = &cobra.Command{
 	Long:  "Adds a grocery item to the list with case-insensitive duplicate checking",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-
 		item := args[0]
 
-		jsonStorage, err := storage.NewJSONFileStorage()
+		store := getStore(cmd)
+
+		has, err := store.HasGrocery(cmd.Context(), item)
 		if err != nil {
-			zap.S().Error("Error Loading Storage")
-			zap.S().Error(err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error checking groceries: %v\n", err)
 			return
 		}
-
-		groceries, err := jsonStorage.GetAllGroceries()
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Error loading groceries: %v\n", err)
+		if has {
+			fmt.Printf("Item '%s' already exists\n", item)
 			return
-		}
-
-		for _, existing := range groceries {
-			if strings.EqualFold(existing.Name, item) {
-				fmt.Printf("Item '%s' already exists\n", item)
-				return
-			}
 		}
 
 		zap.S().Info("Getting Embedding Value For Grocery")
-		// Create embeddings
 		embedding, err := models.CreateGroceryEmbedding(item)
 		if err != nil {
 			zap.S().Error("Failed To Create Grocery Embedding Data", err)
@@ -53,8 +42,7 @@ var addGroceryCmd = &cobra.Command{
 			Embedding: embedding,
 		}
 
-		err = jsonStorage.AddGrocery(newGrocery)
-		if err != nil {
+		if err := store.AddGrocery(cmd.Context(), newGrocery); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Error saving groceries: %v\n", err)
 			return
 		}

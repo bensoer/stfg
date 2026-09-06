@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
-	"stfg/internal/storage"
 )
 
 var groceriesCmd = &cobra.Command{
@@ -16,10 +15,8 @@ func init() {
 
 	groceriesCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if rootCmd.PersistentPreRunE != nil {
-			if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-				return err
-			}
+			return rootCmd.PersistentPreRunE(cmd, args)
 		}
-		return storage.EnsureGroceryFileExists()
+		return nil
 	}
 }

@@ -1,12 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
-	"strings"
-
-	"stfg/internal/storage"
 
 	"github.com/spf13/cobra"
+
+	"stfg/internal/storage"
 )
 
 var removeGroceryCmd = &cobra.Command{
@@ -17,29 +17,15 @@ var removeGroceryCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		item := args[0]
 
-		groceries, err := storage.LoadGroceries()
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Error loading groceries: %v\n", err)
-			return
-		}
+		store := getStore(cmd)
 
-		found := false
-		for i, existing := range groceries {
-			if strings.EqualFold(existing, item) {
-				groceries = append(groceries[:i], groceries[i+1:]...)
-				found = true
-				break
+		err := store.RemoveGrocery(cmd.Context(), item)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				fmt.Printf("Item '%s' not found\n", item)
+				return
 			}
-		}
-
-		if !found {
-			fmt.Printf("Item '%s' not found\n", item)
-			return
-		}
-
-		err = storage.SaveGroceries(groceries)
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Error saving groceries: %v\n", err)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error removing groceries: %v\n", err)
 			return
 		}
 		fmt.Printf("\nGrocery list updated: %s removed\n", item)
