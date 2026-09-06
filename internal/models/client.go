@@ -1,7 +1,6 @@
 package models
 
 import (
-	"os"
 	"runtime"
 
 	llama "github.com/tcpipuk/llama-go"

@@ -7,6 +7,7 @@ import (
 	"stfg/internal/flipp"
 	"stfg/internal/reconciler/scrape"
 	"stfg/internal/storage"
+	"stfg/internal/storage/json"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -26,12 +27,14 @@ var scrapeFlyersCmd = &cobra.Command{
 		zap.S().Info("Searching For Valid Deals For ", today.Format("2006-01-02"), " Near Postal Code: ", postalCode)
 
 		client := flipp.NewClient()
-		storage, err := storage.NewJSONFileStorage()
+		store, err := json.NewJSON(cmd.Context())
 		if err != nil {
 			zap.S().Error("Failed To Setup Storage System")
 			zap.S().Error(err)
 			return
 		}
+
+		var s storage.Storage = store
 
 		validFlyers := []string{
 			"Superstore",
@@ -47,7 +50,7 @@ var scrapeFlyersCmd = &cobra.Command{
 			"Rexall",
 		}
 
-		err = scrape.Reconcile(client, storage, scrape.ScrapeReconcilerOptions{
+		err = scrape.Reconcile(cmd.Context(), client, s, scrape.ScrapeReconcilerOptions{
 			PostalCode:           postalCode,
 			RetailGroupWhiteList: validFlyers,
 		})

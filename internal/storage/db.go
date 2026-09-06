@@ -105,7 +105,7 @@ func RemoveInvalidFlyers() error {
 
 	validFlyers := []Flyer{}
 	for _, f := range flyers {
-		if f.ValidTo >= time.Now().Format("2006-01-02") {
+		if f.ValidTo.IsZero() || !f.ValidTo.Before(time.Now()) {
 			validFlyers = append(validFlyers, f)
 		} else {
 			// delete the flyer items file for this flyer
