@@ -862,3 +862,404 @@ func TestListFlyerItems_Empty(t *testing.T) {
 	}
 }
 
+func TestListFlyerItems_StableOrder(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer
+	flyer := storage.Flyer{
+		ID:        700,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer for Stable Order",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	// Add items in specific order
+	items := []storage.FlyerItem{
+		{ID: 1, FlyerID: 700, Name: "Z Item"},
+		{ID: 2, FlyerID: 700, Name: "A Item"},
+		{ID: 3, FlyerID: 700, Name: "M Item"},
+	}
+	for _, item := range items {
+		if err := fs.AddFlyerItem(ctx, item); err != nil {
+			t.Fatalf("AddFlyerItem %d failed: %v", item.ID, err)
+		}
+	}
+
+	// List items
+	listed, err := fs.ListFlyerItems(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems failed: %v", err)
+	}
+	if len(listed) != 3 {
+		t.Errorf("expected 3 flyer items, got %d", len(listed))
+		return
+	}
+	// Check insertion order is preserved
+	if listed[0].Name != "Z Item" {
+		t.Errorf("first item name = %q, want Z Item", listed[0].Name)
+	}
+	if listed[1].Name != "A Item" {
+		t.Errorf("second item name = %q, want A Item", listed[1].Name)
+	}
+	if listed[2].Name != "M Item" {
+		t.Errorf("third item name = %q, want M Item", listed[2].Name)
+	}
+}
+
+func TestHasFlyerItem_PresentAndAbsent(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer
+	flyer := storage.Flyer{
+		ID:        800,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer for HasItem Test",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	// Test absent item
+	has, err := fs.HasFlyerItem(ctx, flyer.ID, 999)
+	if err != nil {
+		t.Fatalf("HasFlyerItem failed: %v", err)
+	}
+	if has {
+		t.Error("HasFlyerItem for absent item should return false")
+	}
+
+	// Add an item
+	item := storage.FlyerItem{
+		ID:       42,
+		FlyerID:  800,
+		Name:     "Present Item",
+	}
+	if err := fs.AddFlyerItem(ctx, item); err != nil {
+		t.Fatalf("AddFlyerItem failed: %v", err)
+	}
+
+	// Test present item
+	has, err = fs.HasFlyerItem(ctx, flyer.ID, item.ID)
+	if err != nil {
+		t.Fatalf("HasFlyerItem failed: %v", err)
+	}
+	if !has {
+		t.Error("HasFlyerItem for present item should return true")
+	}
+}
+
+func TestPruneExpired_RemovesStaleAndKeepsCurrent(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	now := mustTime(t, "2024-06-15T12:00:00Z")
+
+	// Add an expired flyer (ValidTo before now)
+	expired := storage.Flyer{
+		ID:        1,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-06-01T23:59:59Z"), // expired
+		Name:      "Expired Flyer",
+		Merchant:  "Test Merchant",
+	}
+	// Add a current flyer (ValidTo after now)
+	current := storage.Flyer{
+		ID:        2,
+		ValidFrom: mustTime(t, "2024-06-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-06-30T23:59:59Z"), // current
+		Name:      "Current Flyer",
+		Merchant:  "Test Merchant",
+	}
+	// Add a flyer with zero ValidTo (should be kept - treat as no expiry)
+	noExpiry := storage.Flyer{
+		ID:        3,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		Name:      "No Expiry Flyer",
+		Merchant:  "Test Merchant",
+	}
+
+	if err := fs.AddFlyer(ctx, expired); err != nil {
+		t.Fatalf("AddFlyer expired failed: %v", err)
+	}
+	if err := fs.AddFlyer(ctx, current); err != nil {
+		t.Fatalf("AddFlyer current failed: %v", err)
+	}
+	if err := fs.AddFlyer(ctx, noExpiry); err != nil {
+		t.Fatalf("AddFlyer noExpiry failed: %v", err)
+	}
+
+	// Add items to each flyer to test cascade
+	for _, f := range []storage.Flyer{expired, current, noExpiry} {
+		item := storage.FlyerItem{
+			ID:       1,
+			FlyerID:  f.ID,
+			Name:     "Test Item",
+		}
+		if err := fs.AddFlyerItem(ctx, item); err != nil {
+			t.Fatalf("AddFlyerItem for flyer %d failed: %v", f.ID, err)
+		}
+	}
+
+	// Run prune
+	if err := fs.PruneExpired(ctx, now); err != nil {
+		t.Fatalf("PruneExpired failed: %v", err)
+	}
+
+	// Check expired flyer is removed
+	hasExpired, err := fs.HasFlyer(ctx, expired.ID)
+	if err != nil {
+		t.Fatalf("HasFlyer for expired failed: %v", err)
+	}
+	if hasExpired {
+		t.Error("Expired flyer should be removed")
+	}
+
+	// Check current flyer is kept
+	hasCurrent, err := fs.HasFlyer(ctx, current.ID)
+	if err != nil {
+		t.Fatalf("HasFlyer for current failed: %v", err)
+	}
+	if !hasCurrent {
+		t.Error("Current flyer should be kept")
+	}
+
+	// Check noExpiry flyer is kept
+	hasNoExpiry, err := fs.HasFlyer(ctx, noExpiry.ID)
+	if err != nil {
+		t.Fatalf("HasFlyer for noExpiry failed: %v", err)
+	}
+	if !hasNoExpiry {
+		t.Error("NoExpiry flyer should be kept")
+	}
+
+	// Check items cascade
+	// Expired flyer items should be gone (returns empty slice, not error)
+	expiredItems, err := fs.ListFlyerItems(ctx, expired.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems for expired items failed unexpectedly: %v", err)
+	}
+	if len(expiredItems) != 0 {
+		t.Errorf("expected 0 items for expired flyer (items removed), got %d", len(expiredItems))
+	}
+
+	// Current flyer items should remain
+	currentItems, err := fs.ListFlyerItems(ctx, current.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems for current failed: %v", err)
+	}
+	if len(currentItems) != 1 {
+		t.Errorf("expected 1 item for current flyer, got %d", len(currentItems))
+	}
+
+	// NoExpiry flyer items should remain
+	noExpiryItems, err := fs.ListFlyerItems(ctx, noExpiry.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems for noExpiry failed: %v", err)
+	}
+	if len(noExpiryItems) != 1 {
+		t.Errorf("expected 1 item for noExpiry flyer, got %d", len(noExpiryItems))
+	}
+}
+
+func TestPruneExpired_Idempotent(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	now := mustTime(t, "2024-06-15T12:00:00Z")
+
+	// Add an expired flyer
+	expired := storage.Flyer{
+		ID:        1,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-06-01T23:59:59Z"), // expired
+		Name:      "Expired Flyer",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, expired); err != nil {
+		t.Fatalf("AddFlyer expired failed: %v", err)
+	}
+
+	// Run prune multiple times
+	for i := 0; i < 3; i++ {
+		if err := fs.PruneExpired(ctx, now); err != nil {
+			t.Fatalf("PruneExpired() call %d failed: %v", i+1, err)
+		}
+	}
+
+	// Verify flyer is gone
+	has, err := fs.HasFlyer(ctx, expired.ID)
+	if err != nil {
+		t.Fatalf("HasFlyer failed: %v", err)
+	}
+	if has {
+		t.Error("Expired flyer should be removed")
+	}
+}
+
+func TestPruneExpired_NoFlyers(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	now := mustTime(t, "2024-06-15T12:00:00Z")
+
+	// Should not error on empty store
+	if err := fs.PruneExpired(ctx, now); err != nil {
+		t.Fatalf("PruneExpired on empty store failed: %v", err)
+	}
+}
+
+// Concurrency tests
+
+func TestConcurrent_AddGrocery_NoTornWrites(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	const numGoroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	// Track which names we added
+	addedNames := make(map[string]bool)
+	var mu sync.Mutex
+
+	// Launch goroutines to add unique items
+	for i := 0; i < numGoroutines; i++ {
+		go func(id int) {
+			defer wg.Done()
+			name := fmt.Sprintf("item_%03d", id)
+			item := storage.GroceryItem{
+				Name:      name,
+				Embedding: mustEmbed(t, 3),
+			}
+			mu.Lock()
+			addedNames[name] = true
+			mu.Unlock()
+			if err := fs.AddGrocery(ctx, item); err != nil {
+				t.Errorf("AddGrocery %s failed: %v", name, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify all items were added
+	groceries, err := fs.ListGroceries(ctx)
+	if err != nil {
+		t.Fatalf("ListGroceries failed: %v", err)
+	}
+	if len(groceries) != numGoroutines {
+		t.Errorf("expected %d groceries after concurrent adds, got %d", numGoroutines, len(groceries))
+		return
+	}
+
+	// Check that all expected names are present
+	foundNames := make(map[string]bool)
+	for _, g := range groceries {
+		foundNames[g.Name] = true
+	}
+	for name := range addedNames {
+		if !foundNames[name] {
+			t.Errorf("expected grocery %s not found in results", name)
+		}
+	}
+}
+
+func TestConcurrent_ReadAndWrite_NoTornWrites(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	const numAdders = 25
+	const numListers = 25
+	var wg sync.WaitGroup
+	wg.Add(numAdders + numListers)
+
+	var addErrors, listErrors []string
+	var mu sync.Mutex
+
+	// Launch adders
+	for i := 0; i < numAdders; i++ {
+		go func(id int) {
+			defer wg.Done()
+			name := fmt.Sprintf("concurrent_%d", id)
+			item := storage.GroceryItem{
+				Name:      name,
+				Embedding: mustEmbed(t, 2),
+			}
+			if err := fs.AddGrocery(ctx, item); err != nil {
+				mu.Lock()
+				addErrors = append(addErrors, fmt.Sprintf("AddGrocery %s: %v", name, err))
+				mu.Unlock()
+			}
+		}(i)
+	}
+
+	// Launch listers
+	for i := 0; i < numListers; i++ {
+		go func() {
+			defer wg.Done()
+			if _, err := fs.ListGroceries(ctx); err != nil {
+				mu.Lock()
+				listErrors = append(listErrors, fmt.Sprintf("ListGroceries: %v", err))
+				mu.Unlock()
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if len(addErrors) > 0 {
+		t.Errorf("errors during concurrent adds: %v", addErrors)
+	}
+	if len(listErrors) > 0 {
+		t.Errorf("errors during concurrent lists: %v", listErrors)
+	}
+
+	// Verify all added items are present
+	groceries, err := fs.ListGroceries(ctx)
+	if err != nil {
+		t.Fatalf("ListGroceries failed: %v", err)
+	}
+	if len(groceries) != numAdders {
+		t.Errorf("expected %d groceries after concurrent adds+listers, got %d", numAdders, len(groceries))
+		return
+	}
+	for i := 0; i < numAdders; i++ {
+		name := fmt.Sprintf("concurrent_%d", i)
+		found := false
+		for _, g := range groceries {
+			if g.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected grocery %s not found in final list", name)
+		}
+	}
+}
+
+func TestClose_Idempotent(t *testing.T) {
+	fs, _ := newTestStorage(t)
+
+	// Should not error when called multiple times
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
+	}
+	if err := fs.Close(); err != nil {
+		t.Fatalf("Close() second call failed: %v", err)
+	}
+}
+
+// Helper for comparing float32 slices
+func sliceEqualFloat32(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

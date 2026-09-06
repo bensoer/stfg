@@ -164,13 +164,13 @@ func TestFlyer_JSONRoundTrip(t *testing.T) {
 
 func TestFlyerItem_JSONRoundTrip(t *testing.T) {
 	item := FlyerItem{
-		ID:        10,
-		FlyerID:   1,
-		Name:      "Item Name",
-		Brand:     "Brand",
-		Price:     "$4.99",
-		ImageURL:  "http://example.com/image.jpg",
-		VideoURL:  "http://example.com/video.mp4",
+		ID:          10,
+		FlyerID:     1,
+		Name:        "Item Name",
+		Brand:       "Brand",
+		Price:       "$4.99",
+		ImageURL:    "http://example.com/image.jpg",
+		VideoURL:    "http://example.com/video.mp4",
 		DisplayType: 1,
 	}
 	data, err := json.Marshal(item)
@@ -286,21 +286,25 @@ func TestReconcile_NewSignatureCompiles(t *testing.T) {
 // Mock types for testing
 type mockStorage struct{}
 
-func (m *mockStorage) Close() error { return nil }
-func (m *mockStorage) Migrate(ctx context.Context) error { return nil }
-func (m *mockStorage) AddGrocery(ctx context.Context, item GroceryItem) error { return nil }
-func (m *mockStorage) RemoveGrocery(ctx context.Context, name string) error { return nil }
-func (m *mockStorage) ListGroceries(ctx context.Context) ([]GroceryItem, error) { return nil, nil }
-func (m *mockStorage) HasGrocery(ctx context.Context, name string) (bool, error) { return false, nil }
-func (m *mockStorage) AddFlyer(ctx context.Context, flyer Flyer) error { return nil }
-func (m *mockStorage) RemoveFlyer(ctx context.Context, id int64) error { return nil }
-func (m *mockStorage) GetFlyer(ctx context.Context, id int64) (*Flyer, error) { return nil, nil }
-func (m *mockStorage) ListFlyers(ctx context.Context) ([]Flyer, error) { return nil, nil }
-func (m *mockStorage) HasFlyer(ctx context.Context, id int64) (bool, error) { return false, nil }
-func (m *mockStorage) AddFlyerItem(ctx context.Context, item FlyerItem) error { return nil }
+func (m *mockStorage) Close() error                                                     { return nil }
+func (m *mockStorage) Migrate(ctx context.Context) error                                { return nil }
+func (m *mockStorage) AddGrocery(ctx context.Context, item GroceryItem) error           { return nil }
+func (m *mockStorage) RemoveGrocery(ctx context.Context, name string) error             { return nil }
+func (m *mockStorage) ListGroceries(ctx context.Context) ([]GroceryItem, error)         { return nil, nil }
+func (m *mockStorage) HasGrocery(ctx context.Context, name string) (bool, error)        { return false, nil }
+func (m *mockStorage) AddFlyer(ctx context.Context, flyer Flyer) error                  { return nil }
+func (m *mockStorage) RemoveFlyer(ctx context.Context, id int64) error                  { return nil }
+func (m *mockStorage) GetFlyer(ctx context.Context, id int64) (*Flyer, error)           { return nil, nil }
+func (m *mockStorage) ListFlyers(ctx context.Context) ([]Flyer, error)                  { return nil, nil }
+func (m *mockStorage) HasFlyer(ctx context.Context, id int64) (bool, error)             { return false, nil }
+func (m *mockStorage) AddFlyerItem(ctx context.Context, item FlyerItem) error           { return nil }
 func (m *mockStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64) error { return nil }
-func (m *mockStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]FlyerItem, error) { return nil, nil }
-func (m *mockStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (bool, error) { return false, nil }
+func (m *mockStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]FlyerItem, error) {
+	return nil, nil
+}
+func (m *mockStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (bool, error) {
+	return false, nil
+}
 func (m *mockStorage) PruneExpired(ctx context.Context, now time.Time) error { return nil }
 
 // Grep-style tests
@@ -357,8 +361,6 @@ func TestScrapeTypes_RetailGroupLocationRemoved(t *testing.T) {
 	if strings.Contains(content, "type RetailGroupLocation") {
 		t.Error("type RetailGroupLocation should not be present in scrape/types.go")
 	}
-	// Also check that the flipp client still references it (we can't check without reading flipp/client.go)
-	// For now, just check the types.go file.
 }
 
 func TestCanonicalTypes_NoDuplicates(t *testing.T) {
