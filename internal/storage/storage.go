@@ -3,18 +3,30 @@ package storage
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
 // Sentinel errors. Backends wrap these with errors.Is-compatible errors
 // so callers can use errors.Is to test for "not found", "duplicate", etc.
 var (
-	ErrNotFound        = errors.New("storage: not found")
-	ErrDuplicate       = errors.New("storage: duplicate")
-	// ErrInvalidArgument is reserved for future backend validation.
-	// Currently declared for interface completeness but not yet returned by any backend.
+	ErrNotFound  = errors.New("storage: not found")
+	ErrDuplicate = errors.New("storage: duplicate")
+	// ErrInvalidArgument is reserved for invalid-argument validation;
+	// returned for empty/whitespace grocery names in AddGrocery, RemoveGrocery,
+	// and HasGrocery across all three backends (sqlite, bolt, and JSON).
 	ErrInvalidArgument = errors.New("storage: invalid argument")
 )
+
+// NormalizeName lowercases a grocery name for case-insensitive keying.
+// Backends use this instead of strings.EqualFold so all three backends
+// (JSON, sqlite, bolt) share the same normalization semantics. Under
+// strings.EqualFold, certain Unicode pairs (e.g. "Σ"/"ς") are treated as
+// duplicates, whereas strings.ToLower treats them as distinct — the shared
+// ToLower semantics are what the parity contract pins.
+func NormalizeName(name string) string {
+	return strings.ToLower(name)
+}
 
 // Storage is the single contract every persistence backend must satisfy.
 // All methods take a context.Context so backends can support cancellation/timeouts.

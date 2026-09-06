@@ -148,7 +148,9 @@ func TestFlyer_JSONRoundTrip(t *testing.T) {
 			t.Errorf("Store[0].ID: got %d, want %d", out.Stores[0].ID, flyer.Stores[0].ID)
 		}
 	}
-	// Test omitempty: empty stores should be omitted
+	// Test that nil stores serialize as null (not omitted), so the JSON backend
+	// can distinguish nil from an empty []Store — see the parity contract's
+	// Flyer_NilStores_RoundTripsNil and Flyer_NonNilEmptyStores_Preserved subtests.
 	flyer2 := Flyer{ID: 2}
 	data2, err := json.Marshal(flyer2)
 	if err != nil {
@@ -157,8 +159,8 @@ func TestFlyer_JSONRoundTrip(t *testing.T) {
 	if !strings.Contains(string(data2), `"id":2`) {
 		t.Error("expected ID field present")
 	}
-	if strings.Contains(string(data2), `"stores"`) {
-		t.Error("empty Stores should be omitted")
+	if !strings.Contains(string(data2), `"stores":null`) {
+		t.Error("nil Stores should serialize as null, not be omitted")
 	}
 }
 
