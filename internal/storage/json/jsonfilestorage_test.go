@@ -433,3 +433,432 @@ func TestAddFlyer_DuplicateIDReturnsErrDuplicate(t *testing.T) {
 	}
 }
 
+func TestGetFlyer_Found(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	flyer := storage.Flyer{
+		ID:        99,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Found Flyer",
+		Merchant:  "Found Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	result, err := fs.GetFlyer(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("GetFlyer failed: %v", err)
+	}
+	if result == nil {
+		t.Error("GetFlyer returned nil for existing flyer")
+		return
+	}
+	if result.ID != flyer.ID {
+		t.Errorf("GetFlyer ID = %d, want %d", result.ID, flyer.ID)
+	}
+	if !result.ValidFrom.Equal(flyer.ValidFrom) {
+		t.Errorf("GetFlyer ValidFrom mismatch")
+	}
+	if !result.ValidTo.Equal(flyer.ValidTo) {
+		t.Errorf("GetFlyer ValidTo mismatch")
+	}
+	if result.Name != flyer.Name {
+		t.Errorf("GetFlyer name = %q, want %q", result.Name, flyer.Name)
+	}
+	if result.Merchant != flyer.Merchant {
+		t.Errorf("GetFlyer merchant = %q, want %q", result.Merchant, flyer.Merchant)
+	}
+}
+
+func TestGetFlyer_NotFound(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	_, err := fs.GetFlyer(ctx, 999) // non-existent ID
+	if err == nil {
+		t.Error("GetFlyer for non-existent ID should return error")
+		return
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("error = %v, want storage.ErrNotFound", err)
+	}
+}
+
+func TestListFlyers_Empty(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	flyers, err := fs.ListFlyers(ctx)
+	if err != nil {
+		t.Fatalf("ListFlyers failed: %v", err)
+	}
+	if flyers == nil {
+		t.Error("ListFlyers returned nil slice, want empty slice")
+	}
+	if len(flyers) != 0 {
+		t.Errorf("expected empty flyers list, got %d items", len(flyers))
+	}
+}
+
+func TestListFlyers_Multiple(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add two flyers
+	flyer1 := storage.Flyer{
+		ID:        1,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "First Flyer",
+		Merchant:  "First Merchant",
+	}
+	flyer2 := storage.Flyer{
+		ID:        2,
+		ValidFrom: mustTime(t, "2024-02-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-02-29T23:59:59Z"),
+		Name:      "Second Flyer",
+		Merchant:  "Second Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer1); err != nil {
+		t.Fatalf("AddFlyer first failed: %v", err)
+	}
+	if err := fs.AddFlyer(ctx, flyer2); err != nil {
+		t.Fatalf("AddFlyer second failed: %v", err)
+	}
+
+	flyers, err := fs.ListFlyers(ctx)
+	if err != nil {
+		t.Fatalf("ListFlyers failed: %v", err)
+	}
+	if len(flyers) != 2 {
+		t.Errorf("expected 2 flyers, got %d", len(flyers))
+		return
+	}
+	// Check stable order (insertion order)
+	if flyers[0].ID != 1 {
+		t.Errorf("first flyer ID = %d, want 1", flyers[0].ID)
+	}
+	if flyers[1].ID != 2 {
+		t.Errorf("second flyer ID = %d, want 2", flyers[1].ID)
+	}
+}
+
+func TestHasFlyer_PresentAndAbsent(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Test absent flyer
+	has, err := fs.HasFlyer(ctx, 999)
+	if err != nil {
+		t.Fatalf("HasFlyer failed: %v", err)
+	}
+	if has {
+		t.Error("HasFlyer for absent flyer should return false")
+	}
+
+	// Add a flyer
+	flyer := storage.Flyer{
+		ID:        123,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Test Flyer",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	// Test present flyer
+	has, err = fs.HasFlyer(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("HasFlyer failed: %v", err)
+	}
+	if !has {
+		t.Error("HasFlyer for present flyer should return true")
+	}
+}
+
+func TestRemoveFlyer_CascadesItems(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer with items
+	flyer := storage.Flyer{
+		ID:        100,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer With Items",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	// Add items to the flyer
+	item1 := storage.FlyerItem{
+		ID:       1,
+		FlyerID:  100,
+		Name:     "Item 1",
+		Brand:    "Brand A",
+		Price:    "$1.00",
+	}
+	item2 := storage.FlyerItem{
+		ID:       2,
+		FlyerID:  100,
+		Name:     "Item 2",
+		Brand:    "Brand B",
+		Price:    "$2.00",
+	}
+	if err := fs.AddFlyerItem(ctx, item1); err != nil {
+		t.Fatalf("AddFlyerItem 1 failed: %v", err)
+	}
+	if err := fs.AddFlyerItem(ctx, item2); err != nil {
+		t.Fatalf("AddFlyerItem 2 failed: %v", err)
+	}
+
+	// Verify items exist
+	items, err := fs.ListFlyerItems(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 flyer items, got %d", len(items))
+	}
+
+	// Remove the flyer
+	if err := fs.RemoveFlyer(ctx, flyer.ID); err != nil {
+		t.Fatalf("RemoveFlyer failed: %v", err)
+	}
+
+	// Verify flyer is gone
+	has, err := fs.HasFlyer(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("HasFlyer failed: %v", err)
+	}
+	if has {
+		t.Error("Flyer should be removed")
+	}
+
+	// Verify items are gone (cascade)
+	items, err = fs.ListFlyerItems(ctx, flyer.ID)
+	if err != nil {
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("ListFlyerItems failed unexpectedly: %v", err)
+		}
+		// ErrNotFound is expected because the items file was removed
+	} else {
+		if len(items) != 0 {
+			t.Errorf("expected 0 flyer items after flyer removal, got %d", len(items))
+		}
+	}
+}
+
+func TestAddFlyerItem_RoundTrip(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// First add a flyer so we have a valid FlyerID
+	flyer := storage.Flyer{
+		ID:        200,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer for Items",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	item := storage.FlyerItem{
+		ID:          10,
+		FlyerID:     200,
+		Name:        "Test Item",
+		Brand:       "Test Brand",
+		Price:       "$3.99",
+		ImageURL:    "http://example.com/image.jpg",
+		VideoURL:    "http://example.com/video.mp4",
+		DisplayType: 1,
+	}
+
+	if err := fs.AddFlyerItem(ctx, item); err != nil {
+		t.Fatalf("AddFlyerItem failed: %v", err)
+	}
+
+	items, err := fs.ListFlyerItems(ctx, item.FlyerID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 flyer item, got %d", len(items))
+		return
+	}
+	if items[0].ID != item.ID {
+		t.Errorf("item ID = %d, want %d", items[0].ID, item.ID)
+	}
+	if items[0].FlyerID != item.FlyerID {
+		t.Errorf("item FlyerID = %d, want %d", items[0].FlyerID, item.FlyerID)
+	}
+	if items[0].Name != item.Name {
+		t.Errorf("item name = %q, want %q", items[0].Name, item.Name)
+	}
+	if items[0].Brand != item.Brand {
+		t.Errorf("item brand = %q, want %q", items[0].Brand, item.Brand)
+	}
+	if items[0].Price != item.Price {
+		t.Errorf("item price = %q, want %q", items[0].Price, item.Price)
+	}
+	if items[0].ImageURL != item.ImageURL {
+		t.Errorf("item imageURL = %q, want %q", items[0].ImageURL, item.ImageURL)
+	}
+	if items[0].VideoURL != item.VideoURL {
+		t.Errorf("item videoURL = %q, want %q", items[0].VideoURL, item.VideoURL)
+	}
+	if items[0].DisplayType != item.DisplayType {
+		t.Errorf("item displayType = %d, want %d", items[0].DisplayType, item.DisplayType)
+	}
+}
+
+func TestAddFlyerItem_DuplicateIDReturnsErrDuplicate(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer
+	flyer := storage.Flyer{
+		ID:        300,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer for Duplicate Test",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	item1 := storage.FlyerItem{
+		ID:       5,
+		FlyerID:  300,
+		Name:     "Item 1",
+	}
+	item2 := storage.FlyerItem{
+		ID:       5, // same ID and FlyerID
+		FlyerID:  300,
+		Name:     "Item 2",
+	}
+
+	if err := fs.AddFlyerItem(ctx, item1); err != nil {
+		t.Fatalf("first AddFlyerItem failed: %v", err)
+	}
+
+	err := fs.AddFlyerItem(ctx, item2)
+	if err == nil {
+		t.Error("expected ErrDuplicate for duplicate flyer item ID")
+		return
+	}
+	if !errors.Is(err, storage.ErrDuplicate) {
+		t.Errorf("error = %v, want storage.ErrDuplicate", err)
+	}
+}
+
+func TestRemoveFlyerItem_RoundTrip(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer
+	flyer := storage.Flyer{
+		ID:        400,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer for Item Removal",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	// Add two items
+	item1 := storage.FlyerItem{
+		ID:       10,
+		FlyerID:  400,
+		Name:     "First Item",
+	}
+	item2 := storage.FlyerItem{
+		ID:       11,
+		FlyerID:  400,
+		Name:     "Second Item",
+	}
+	if err := fs.AddFlyerItem(ctx, item1); err != nil {
+		t.Fatalf("AddFlyerItem first failed: %v", err)
+	}
+	if err := fs.AddFlyerItem(ctx, item2); err != nil {
+		t.Fatalf("AddFlyerItem second failed: %v", err)
+	}
+
+	// Remove one item
+	if err := fs.RemoveFlyerItem(ctx, flyer.ID, item1.ID); err != nil {
+		t.Fatalf("RemoveFlyerItem failed: %v", err)
+	}
+
+	// List remaining items
+	items, err := fs.ListFlyerItems(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("expected 1 flyer item after removal, got %d", len(items))
+		return
+	}
+	if items[0].ID != item2.ID {
+		t.Errorf("remaining item ID = %d, want %d", items[0].ID, item2.ID)
+	}
+	if items[0].Name != item2.Name {
+		t.Errorf("remaining item name = %q, want %q", items[0].Name, item2.Name)
+	}
+}
+
+func TestRemoveFlyerItem_NotFound(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer
+	flyer := storage.Flyer{
+		ID:        500,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer for NotFound Test",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	// Try to remove non-existent item
+	err := fs.RemoveFlyerItem(ctx, flyer.ID, 999)
+	if err == nil {
+		t.Error("expected ErrNotFound for removing non-existent flyer item")
+		return
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("error = %v, want storage.ErrNotFound", err)
+	}
+}
+
+func TestListFlyerItems_Empty(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// Add a flyer with no items
+	flyer := storage.Flyer{
+		ID:        600,
+		ValidFrom: mustTime(t, "2024-01-01T00:00:00Z"),
+		ValidTo:   mustTime(t, "2024-01-31T23:59:59Z"),
+		Name:      "Flyer With No Items",
+		Merchant:  "Test Merchant",
+	}
+	if err := fs.AddFlyer(ctx, flyer); err != nil {
+		t.Fatalf("AddFlyer failed: %v", err)
+	}
+
+	items, err := fs.ListFlyerItems(ctx, flyer.ID)
+	if err != nil {
+		t.Fatalf("ListFlyerItems failed: %v", err)
+	}
+	if items == nil {
+		t.Error("ListFlyerItems returned nil slice, want empty slice")
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty flyer items list, got %d items", len(items))
+	}
+}
+
