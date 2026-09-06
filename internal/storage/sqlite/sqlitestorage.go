@@ -35,7 +35,7 @@ var createTableStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 	`CREATE TABLE IF NOT EXISTS groceries (name TEXT PRIMARY KEY COLLATE NOCASE, embedding BLOB NOT NULL);`,
 	`CREATE TABLE IF NOT EXISTS flyers (id INTEGER PRIMARY KEY, valid_from TEXT NOT NULL, valid_to TEXT, name TEXT NOT NULL, merchant TEXT NOT NULL, stores TEXT NOT NULL DEFAULT '[]');`,
-	`CREATE TABLE IF NOT EXISTS flyer_items (id INTEGER PRIMARY KEY, flyer_id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER, FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
+	`CREATE TABLE IF NOT EXISTS flyer_items (flyer_id INTEGER NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER, PRIMARY KEY (flyer_id, id), FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
 	`CREATE INDEX IF NOT EXISTS idx_flyer_items_flyer_id ON flyer_items(flyer_id);`,
 	`CREATE INDEX IF NOT EXISTS idx_flyers_valid_to ON flyers(valid_to);`,
 }
@@ -87,9 +87,14 @@ func NewSQLite(ctx context.Context, opts Options) (*SQLiteStorage, error) {
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		f, err := os.OpenFile(dbPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
-			return nil, fmt.Errorf("sqlite: create db file: %w", err)
-		}
-		if err := f.Close(); err != nil {
+			// If a concurrent opener created the file between our Stat and
+			// OpenFile, swallow EEXIST and fall through to sql.Open, which will
+			// reuse the existing file. Migrate is idempotent and ON CONFLICT
+			// collisions are no-ops.
+			if !errors.Is(err, os.ErrExist) {
+				return nil, fmt.Errorf("sqlite: create db file: %w", err)
+			}
+		} else if err := f.Close(); err != nil {
 			return nil, fmt.Errorf("sqlite: close db file: %w", err)
 		}
 	}
@@ -193,10 +198,10 @@ func bytesToEmbedding(buf []byte) ([]float32, error) {
 // --- Stores serialisation ---
 
 // marshalStores serialises a []storage.Store as JSON text. A nil slice
-// becomes "[]" so it round-trips cleanly.
+// becomes "null" so it round-trips to nil via unmarshalStores.
 func marshalStores(stores []storage.Store) (string, error) {
 	if stores == nil {
-		stores = []storage.Store{}
+		return "null", nil
 	}
 	data, err := json.Marshal(stores)
 	if err != nil {
@@ -205,10 +210,10 @@ func marshalStores(stores []storage.Store) (string, error) {
 	return string(data), nil
 }
 
-// unmarshalStores deserialises the stores JSON column. An empty or "[]"
-// string yields a nil slice (which is fine — the type uses omitempty).
+// unmarshalStores deserialises the stores JSON column. A "null" or empty
+// string yields a nil slice; "[]" yields a non-nil empty slice.
 func unmarshalStores(data string) ([]storage.Store, error) {
-	if strings.TrimSpace(data) == "" {
+	if data == "" || data == "null" {
 		return nil, nil
 	}
 	var stores []storage.Store
@@ -243,7 +248,10 @@ func (s *SQLiteStorage) RemoveGrocery(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: remove grocery: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: remove grocery rows affected: %w", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("%w: %s", storage.ErrNotFound, name)
 	}
@@ -300,12 +308,12 @@ func (s *SQLiteStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error
 
 	validTo := sql.NullString{}
 	if !flyer.ValidTo.IsZero() {
-		validTo = sql.NullString{String: flyer.ValidTo.UTC().Format(time.RFC3339), Valid: true}
+		validTo = sql.NullString{String: flyer.ValidTo.UTC().Format(time.RFC3339Nano), Valid: true}
 	}
 
 	res, err := s.db.ExecContext(ctx,
 		"INSERT INTO flyers (id, valid_from, valid_to, name, merchant, stores) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
-		flyer.ID, flyer.ValidFrom.UTC().Format(time.RFC3339), validTo, flyer.Name, flyer.Merchant, storesJSON)
+		flyer.ID, flyer.ValidFrom.UTC().Format(time.RFC3339Nano), validTo, flyer.Name, flyer.Merchant, storesJSON)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert flyer: %w", err)
 	}
@@ -324,7 +332,10 @@ func (s *SQLiteStorage) RemoveFlyer(ctx context.Context, id int64) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: remove flyer: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: remove flyer rows affected: %w", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("%w: %d", storage.ErrNotFound, id)
 	}
@@ -431,9 +442,12 @@ func (s *SQLiteStorage) HasFlyer(ctx context.Context, id int64) (bool, error) {
 
 func (s *SQLiteStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) error {
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO flyer_items (id, flyer_id, name, brand, price, image_url, video_url, display_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
+		"INSERT INTO flyer_items (id, flyer_id, name, brand, price, image_url, video_url, display_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(flyer_id, id) DO NOTHING",
 		item.ID, item.FlyerID, item.Name, item.Brand, item.Price, item.ImageURL, item.VideoURL, item.DisplayType)
 	if err != nil {
+		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+			return fmt.Errorf("%w: flyer %d", storage.ErrNotFound, item.FlyerID)
+		}
 		return fmt.Errorf("sqlite: insert flyer item: %w", err)
 	}
 	rows, err := res.RowsAffected()
@@ -452,7 +466,10 @@ func (s *SQLiteStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int
 	if err != nil {
 		return fmt.Errorf("sqlite: remove flyer item: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: remove flyer item rows affected: %w", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("%w: flyer_id=%d, item_id=%d", storage.ErrNotFound, flyerID, itemID)
 	}
@@ -510,7 +527,7 @@ func (s *SQLiteStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64)
 // removed automatically via the ON DELETE CASCADE foreign key.
 func (s *SQLiteStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx,
-		"DELETE FROM flyers WHERE valid_to < ?", now.UTC().Format(time.RFC3339))
+		"DELETE FROM flyers WHERE julianday(valid_to) < julianday(?)", now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("sqlite: prune expired flyers: %w", err)
 	}

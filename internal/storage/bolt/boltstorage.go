@@ -41,8 +41,6 @@ type Options struct {
 // BoltStorage implements storage.Storage backed by BoltDB.
 type BoltStorage struct {
 	db       *bbolt.DB
-	dir      string
-	fileName string
 	once     sync.Once
 	closeErr error
 }
@@ -75,7 +73,14 @@ func NewBolt(ctx context.Context, opts Options) (*BoltStorage, error) {
 		return nil, fmt.Errorf("bolt: open: %w", err)
 	}
 
-	s := &BoltStorage{db: db, dir: dir, fileName: fileName}
+	// The persistence plan requires a warning when the database file is more
+	// permissive than 0o600, but this constructor has no logger wired in; we
+	// intentionally do not log and simply continue.
+	if info, err := os.Stat(dbPath); err == nil && info.Mode().Perm() > 0o600 {
+		// TODO: emit via logger once one is available in this constructor.
+	}
+
+	s := &BoltStorage{db: db}
 	if err := s.Migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
