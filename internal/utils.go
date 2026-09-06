@@ -3,7 +3,6 @@ package internal
 import (
 	"errors"
 	"os"
-	"time"
 )
 
 func Contains(list []string, target string) bool {
@@ -13,10 +12,6 @@ func Contains(list []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func ParseDate(d string) (time.Time, error) {
-	return time.Parse(time.RFC3339, d)
 }
 
 func FileExists(filename string) bool {
