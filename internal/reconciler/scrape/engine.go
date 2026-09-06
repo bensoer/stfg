@@ -5,21 +5,22 @@ import (
 	"strings"
 	"time"
 
+	"stfg/internal/flyerfinder"
 	"stfg/internal/storage"
 
 	"go.uber.org/zap"
 )
 
-func Reconcile(ctx context.Context, scrapeClient ScrapeClient, storageClient storage.Storage, options ScrapeReconcilerOptions) error {
+func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storage.Storage, options ScrapeReconcilerOptions) error {
 	log := zap.S()
 
 	log.Info("Starting flyer reconciliation")
 
-	if err := storageClient.PruneExpired(ctx, time.Now()); err != nil {
+	if err := store.PruneExpired(ctx, time.Now()); err != nil {
 		return err
 	}
 
-	flyers, err := scrapeClient.GetFlyers(options.PostalCode)
+	flyers, err := finder.FindFlyers(options.PostalCode)
 	if err != nil {
 		return err
 	}
@@ -39,7 +40,7 @@ func Reconcile(ctx context.Context, scrapeClient ScrapeClient, storageClient sto
 		}
 
 		// If the flyer already exists, there is nothing to do
-		has, err := storageClient.HasFlyer(ctx, flyer.ID)
+		has, err := store.HasFlyer(ctx, flyer.ID)
 		if err != nil {
 			return err
 		}
@@ -48,22 +49,22 @@ func Reconcile(ctx context.Context, scrapeClient ScrapeClient, storageClient sto
 		}
 
 		log.Infof("Adding Flyer \"%s - %s\" And Its Items", flyer.Merchant, flyer.Name)
-		if err := storageClient.AddFlyer(ctx, flyer); err != nil {
+		if err := store.AddFlyer(ctx, flyer); err != nil {
 			return err
 		}
 
-		items, err := scrapeClient.GetFlyerItems(flyer.ID)
+		items, err := finder.FindFlyerItems(flyer.ID)
 		if err != nil {
 			return err
 		}
 
 		for _, item := range items {
-			hasItem, err := storageClient.HasFlyerItem(ctx, flyer.ID, item.ID)
+			hasItem, err := store.HasFlyerItem(ctx, flyer.ID, item.ID)
 			if err != nil {
 				return err
 			}
 			if !hasItem {
-				if err := storageClient.AddFlyerItem(ctx, item); err != nil {
+				if err := store.AddFlyerItem(ctx, item); err != nil {
 					return err
 				}
 			}
@@ -71,4 +72,10 @@ func Reconcile(ctx context.Context, scrapeClient ScrapeClient, storageClient sto
 	}
 
 	return nil
+}
+
+// FlyerIsValid checks whether a flyer's validity window contains the current time.
+func FlyerIsValid(flyer storage.Flyer) bool {
+	now := time.Now()
+	return now.After(flyer.ValidFrom) && now.Before(flyer.ValidTo)
 }

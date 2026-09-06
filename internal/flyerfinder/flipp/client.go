@@ -3,11 +3,12 @@ package flipp
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
-	"github.com/h2non/gentleman"
+	"gopkg.in/h2non/gentleman.v2"
+	"go.uber.org/zap"
 
-	"stfg/internal/reconciler/scrape"
+	"stfg/internal"
+	"stfg/internal/flyerfinder"
 	"stfg/internal/storage"
 )
 
@@ -15,11 +16,20 @@ type Client struct {
 	base *gentleman.Client
 }
 
-func NewClient() *Client {
-	return &Client{
-		base: gentleman.New(),
+// NewFinder returns a *Client backed by the given gentleman client.
+// If client is nil, a default gentleman client is created.
+func NewFinder(client *gentleman.Client) *Client {
+	if client == nil {
+		client = gentleman.New()
 	}
+	return &Client{base: client}
 }
+
+// Compile-time assertion that *Client satisfies the flyerfinder.FlyerFinder
+// interface. If *Client ever stops implementing FlyerFinder (e.g. because a
+// method signature changed), this line will produce a clear compile error
+// at this exact location.
+var _ flyerfinder.FlyerFinder = (*Client)(nil)
 
 func (c *Client) GetFlyers(postalCode string) ([]storage.Flyer, error) {
 	resp, err := c.GetFlyersResponse(postalCode)
@@ -55,11 +65,13 @@ func (c *Client) GetFlyers(postalCode string) ([]storage.Flyer, error) {
 			validFromStr = flyer.AvailableFrom
 		}
 		if validFromStr == nil {
+			zap.S().Warnf("Skipping flyer %d (%s): no valid_from or available_from", flyer.ID, flyer.Name)
 			continue
 		}
-		from, err := time.Parse(time.RFC3339, *validFromStr)
+		from, err := internal.ParseDate(*validFromStr)
 		if err != nil {
-			return nil, err
+			zap.S().Warnf("Skipping flyer %d (%s): cannot parse valid_from %q", flyer.ID, flyer.Name, *validFromStr)
+			continue
 		}
 
 		validToStr := flyer.ValidTo
@@ -67,11 +79,13 @@ func (c *Client) GetFlyers(postalCode string) ([]storage.Flyer, error) {
 			validToStr = flyer.AvailableTo
 		}
 		if validToStr == nil {
+			zap.S().Warnf("Skipping flyer %d (%s): no valid_to or available_to", flyer.ID, flyer.Name)
 			continue
 		}
-		to, err := time.Parse(time.RFC3339, *validToStr)
+		to, err := internal.ParseDate(*validToStr)
 		if err != nil {
-			return nil, err
+			zap.S().Warnf("Skipping flyer %d (%s): cannot parse valid_to %q", flyer.ID, flyer.Name, *validToStr)
+			continue
 		}
 
 		flyers = append(flyers, storage.Flyer{
@@ -198,4 +212,12 @@ func (c *Client) GetNearbyStores(flyerID int64, postalCode string) (*GetStoresNe
 	return &parsed, nil
 }
 
-var _ scrape.ScrapeClient = (*Client)(nil)
+// FindFlyers delegates to GetFlyers for FlyerFinder interface compliance.
+func (c *Client) FindFlyers(postalCode string) ([]storage.Flyer, error) {
+	return c.GetFlyers(postalCode)
+}
+
+// FindFlyerItems delegates to GetFlyerItems for FlyerFinder interface compliance.
+func (c *Client) FindFlyerItems(flyerID int64) ([]storage.FlyerItem, error) {
+	return c.GetFlyerItems(flyerID)
+}

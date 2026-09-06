@@ -3,12 +3,12 @@ package flipp
 type FlyerDetail struct {
 	FlyerID int
 	Items   []FlyerItem
-	Stores  []StoreLocation
+	Stores  []RetailGroupLocation
 }
 
-type GetStoresNearByResponse []StoreLocation
+type GetStoresNearByResponse []RetailGroupLocation
 
-type StoreLocation struct {
+type RetailGroupLocation struct {
 	ID         int    `json:"id"`
 	Address    string `json:"address"`
 	City       string `json:"city"`

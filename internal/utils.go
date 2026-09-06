@@ -2,7 +2,9 @@ package internal
 
 import (
 	"errors"
+	"fmt"
 	"os"
+	"time"
 )
 
 func Contains(list []string, target string) bool {
@@ -12,6 +14,20 @@ func Contains(list []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// ParseDate parses a date string in RFC3339 or YYYY-MM-DD format.
+func ParseDate(d string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, d)
+	if err == nil {
+		return t, nil
+	}
+	// Fallback: Flipp API may send dates in YYYY-MM-DD format
+	t, err = time.Parse("2006-01-02", d)
+	if err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("cannot parse date %q: not RFC3339 or YYYY-MM-DD", d)
 }
 
 func FileExists(filename string) bool {
