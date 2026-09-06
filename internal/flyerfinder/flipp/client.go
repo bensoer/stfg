@@ -4,38 +4,58 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/h2non/gentleman"
+	"go.uber.org/zap"
+	"gopkg.in/h2non/gentleman.v2"
 
-	"stfg/internal/reconciler/scrape"
+	"stfg/internal/flyerfinder"
+	"stfg/internal/storage"
 )
 
 type Client struct {
 	base *gentleman.Client
 }
 
-func NewClient() *Client {
-	return &Client{
+// FinderOption configures a Client.
+type FinderOption func(*Client)
+
+// NewFinder returns a new Client finder.
+// Options can be used to customize the client (e.g., for testing).
+func NewFinder(opts ...FinderOption) *Client {
+	c := &Client{
 		base: gentleman.New(),
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// WithBaseClient sets the underlying gentleman.Client (useful for testing with a mock).
+func WithBaseClient(b *gentleman.Client) FinderOption {
+	return func(c *Client) {
+		c.base = b
 	}
 }
 
-func (c *Client) GetRetailGroups(postalCode string) ([]scrape.RetailGroup, error) {
+var _ flyerfinder.FlyerFinder = (*Client)(nil)
+
+func (c *Client) FindFlyers(postalCode string) ([]storage.Flyer, error) {
 	resp, err := c.GetFlyers(postalCode)
 	if err != nil {
 		return nil, err
 	}
 
-	rg := []scrape.RetailGroup{}
-	for _, flyer := range resp.Flyers {
+	flyers := []storage.Flyer{}
+	for _, flippFlyer := range resp.Flyers {
 
-		storeResp, err := c.GetNearbyStores(flyer.ID, postalCode)
+		storeResp, err := c.GetNearbyStores(flippFlyer.ID, postalCode)
 		if err != nil {
 			return nil, err
 		}
 
-		rgl := []scrape.RetailGroupLocation{}
+		stores := []storage.Store{}
 		for _, store := range *storeResp {
-			rgl = append(rgl, scrape.RetailGroupLocation{
+			stores = append(stores, storage.Store{
 				ID:         store.ID,
 				Address:    store.Address,
 				City:       store.City,
@@ -44,63 +64,74 @@ func (c *Client) GetRetailGroups(postalCode string) ([]scrape.RetailGroup, error
 			})
 		}
 
-		validFrom := flyer.ValidFrom
+		validFrom := flippFlyer.ValidFrom
 		if validFrom == nil {
-			validFrom = flyer.AvailableFrom
+			validFrom = flippFlyer.AvailableFrom
+		}
+		if validFrom == nil {
+			zap.S().Warnf("Skipping flyer %d (%s): no valid_from or available_from", flippFlyer.ID, flippFlyer.Name)
+			continue
 		}
 
-		validTo := flyer.ValidTo
+		validTo := flippFlyer.ValidTo
 		if validTo == nil {
-			validTo = flyer.AvailableTo
+			validTo = flippFlyer.AvailableTo
+		}
+		if validTo == nil {
+			zap.S().Warnf("Skipping flyer %d (%s): no valid_to or available_to", flippFlyer.ID, flippFlyer.Name)
+			continue
 		}
 
-		rg = append(rg, scrape.RetailGroup{
-			ID:        flyer.ID,
+		flyers = append(flyers, storage.Flyer{
+			ID:        flippFlyer.ID,
 			ValidFrom: *validFrom,
 			ValidTo:   *validTo,
-			Name:      flyer.Name,
-			Merchant:  flyer.Merchant,
-
-			Locations: rgl,
+			Name:      flippFlyer.Name,
+			Merchant:  flippFlyer.Merchant,
+			Stores:    stores,
 		})
 	}
 
-	return rg, nil
+	return flyers, nil
 }
 
-func (c *Client) GetRetailGroupItems(retailGroupId int64) ([]scrape.RetailGroupItem, error) {
-	resp, err := c.GetFlyerItems(retailGroupId)
+func (c *Client) FindFlyerItems(flyerID int64) ([]storage.FlyerItem, error) {
+	resp, err := c.GetFlyerItems(flyerID)
 	if err != nil {
 		return nil, err
 	}
 
-	rgis := []scrape.RetailGroupItem{}
-	for _, flyerItem := range *resp {
-		rgis = append(rgis, scrape.RetailGroupItem{
-			ID:             flyerItem.ID,
-			RetailGroupId:  retailGroupId,
-			Name:           flyerItem.Name,
-			Brand:          flyerItem.Brand,
-			Price:          flyerItem.Price,
-			CutoutImageURL: flyerItem.CutoutImageURL,
-			VideoURL:       flyerItem.VideoURL,
+	items := []storage.FlyerItem{}
+	for _, flippItem := range *resp {
+		var videoURL *string
+		if flippItem.VideoURL != nil {
+			v := *flippItem.VideoURL
+			videoURL = &v
+		}
+
+		items = append(items, storage.FlyerItem{
+			ID:             flippItem.ID,
+			FlyerID:        flyerID,
+			Name:           flippItem.Name,
+			Brand:          flippItem.Brand,
+			DisplayType:    flippItem.DisplayType,
+			Price:          flippItem.Price,
+			CutoutImageURL: flippItem.CutoutImageURL,
+			VideoURL:       videoURL,
 		})
 	}
 
-	return rgis, nil
-
+	return items, nil
 }
 
 func (c *Client) GetFlyers(postalCode string) (*GetFlyersResponse, error) {
+	// unchanged - keep existing implementation
 	sid := generateSID()
-
 	req := c.base.Request()
 	req.URL("https://dam.flippenterprise.net/api/flipp/data")
-
 	req.SetQuery("locale", "en")
 	req.SetQuery("postal_code", postalCode)
 	req.SetQuery("sid", sid)
-
 	res, err := req.Send()
 	if err != nil {
 		return nil, err
@@ -108,28 +139,23 @@ func (c *Client) GetFlyers(postalCode string) (*GetFlyersResponse, error) {
 	if !res.Ok {
 		return nil, fmt.Errorf("bad response: %d", res.StatusCode)
 	}
-
 	body := res.Bytes()
-
 	var parsed GetFlyersResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, err
 	}
-
 	return &parsed, nil
 }
 
 func (c *Client) GetFlyerItems(flyerID int64) (*GetFlyerItemsResponse, error) {
+	// unchanged - keep existing implementation
 	req := c.base.Request()
-
 	url := fmt.Sprintf(
 		"https://dam.flippenterprise.net/api/flipp/flyers/%d/flyer_items",
 		flyerID,
 	)
-
 	req.URL(url)
 	req.SetQuery("locale", "en")
-
 	res, err := req.Send()
 	if err != nil {
 		return nil, err
@@ -137,27 +163,23 @@ func (c *Client) GetFlyerItems(flyerID int64) (*GetFlyerItemsResponse, error) {
 	if !res.Ok {
 		return nil, fmt.Errorf("bad response: %d", res.StatusCode)
 	}
-
 	var parsed GetFlyerItemsResponse
 	if err := json.Unmarshal(res.Bytes(), &parsed); err != nil {
 		return nil, err
 	}
-
 	return &parsed, nil
 }
 
 func (c *Client) GetNearbyStores(flyerID int64, postalCode string) (*GetStoresNearByResponse, error) {
+	// unchanged - keep existing implementation
 	req := c.base.Request()
-
 	url := fmt.Sprintf(
 		"https://dam.flippenterprise.net/api/flipp/flyers/%d/stores/nearby",
 		flyerID,
 	)
-
 	req.URL(url)
 	req.SetQuery("locale", "en")
 	req.SetQuery("postal_code", postalCode)
-
 	res, err := req.Send()
 	if err != nil {
 		return nil, err
@@ -165,11 +187,9 @@ func (c *Client) GetNearbyStores(flyerID int64, postalCode string) (*GetStoresNe
 	if !res.Ok {
 		return nil, fmt.Errorf("bad response: %d", res.StatusCode)
 	}
-
 	var parsed GetStoresNearByResponse
 	if err := json.Unmarshal(res.Bytes(), &parsed); err != nil {
 		return nil, err
 	}
-
 	return &parsed, nil
 }
