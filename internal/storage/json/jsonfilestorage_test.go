@@ -352,6 +352,34 @@ func TestHasGrocery_PresentAndAbsent(t *testing.T) {
 	}
 }
 
+func TestAddGrocery_EmptyName_ReturnsErrInvalidArgument(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	// AddGrocery must reject empty and whitespace-only names.
+	for _, name := range []string{"", "   ", "\t\n", "\t"} {
+		err := fs.AddGrocery(ctx, storage.GroceryItem{Name: name})
+		if !errors.Is(err, storage.ErrInvalidArgument) {
+			t.Errorf("AddGrocery(%q): error = %v, want storage.ErrInvalidArgument", name, err)
+		}
+	}
+
+	// RemoveGrocery must reject empty and whitespace-only names.
+	for _, name := range []string{"", "   ", "\t\n", "\t"} {
+		err := fs.RemoveGrocery(ctx, name)
+		if !errors.Is(err, storage.ErrInvalidArgument) {
+			t.Errorf("RemoveGrocery(%q): error = %v, want storage.ErrInvalidArgument", name, err)
+		}
+	}
+
+	// HasGrocery must reject empty and whitespace-only names.
+	for _, name := range []string{"", "   ", "\t\n", "\t"} {
+		_, err := fs.HasGrocery(ctx, name)
+		if !errors.Is(err, storage.ErrInvalidArgument) {
+			t.Errorf("HasGrocery(%q): error = %v, want storage.ErrInvalidArgument", name, err)
+		}
+	}
+}
+
 func TestAddFlyer_RoundTrip(t *testing.T) {
 	fs, ctx := newTestStorage(t)
 

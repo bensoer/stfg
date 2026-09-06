@@ -248,10 +248,18 @@ func TestPruneExpired_DoesNotMutateWhileIterating(t *testing.T) {
 
 	// Interleave expired and current flyers so the gather-then-delete path is
 	// exercised with keys both before and after skipped ones.
-	fs.AddFlyer(ctx, storage.Flyer{ID: 1, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), ValidTo: mustTime(t, "2025-06-01T00:00:00Z"), Name: "E1", Merchant: "M"})
-	fs.AddFlyer(ctx, storage.Flyer{ID: 2, ValidFrom: mustTime(t, "2025-06-01T00:00:00Z"), ValidTo: mustTime(t, "2025-06-30T00:00:00Z"), Name: "C1", Merchant: "M"})
-	fs.AddFlyer(ctx, storage.Flyer{ID: 3, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), ValidTo: mustTime(t, "2025-06-02T00:00:00Z"), Name: "E2", Merchant: "M"})
-	fs.AddFlyer(ctx, storage.Flyer{ID: 4, ValidFrom: mustTime(t, "2025-06-20T00:00:00Z"), ValidTo: mustTime(t, "2025-06-30T00:00:00Z"), Name: "C2", Merchant: "M"})
+	if err := fs.AddFlyer(ctx, storage.Flyer{ID: 1, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), ValidTo: mustTime(t, "2025-06-01T00:00:00Z"), Name: "E1", Merchant: "M"}); err != nil {
+		t.Fatalf("AddFlyer: %v", err)
+	}
+	if err := fs.AddFlyer(ctx, storage.Flyer{ID: 2, ValidFrom: mustTime(t, "2025-06-01T00:00:00Z"), ValidTo: mustTime(t, "2025-06-30T00:00:00Z"), Name: "C1", Merchant: "M"}); err != nil {
+		t.Fatalf("AddFlyer: %v", err)
+	}
+	if err := fs.AddFlyer(ctx, storage.Flyer{ID: 3, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), ValidTo: mustTime(t, "2025-06-02T00:00:00Z"), Name: "E2", Merchant: "M"}); err != nil {
+		t.Fatalf("AddFlyer: %v", err)
+	}
+	if err := fs.AddFlyer(ctx, storage.Flyer{ID: 4, ValidFrom: mustTime(t, "2025-06-20T00:00:00Z"), ValidTo: mustTime(t, "2025-06-30T00:00:00Z"), Name: "C2", Merchant: "M"}); err != nil {
+		t.Fatalf("AddFlyer: %v", err)
+	}
 
 	if err := fs.PruneExpired(ctx, now); err != nil {
 		t.Fatalf("PruneExpired: %v", err)
