@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,16 @@ var (
 	// and HasGrocery across all three backends (sqlite, bolt, and JSON).
 	ErrInvalidArgument = errors.New("storage: invalid argument")
 )
+
+// NormalizeName lowercases a grocery name for case-insensitive keying.
+// Backends use this instead of strings.EqualFold so all three backends
+// (JSON, sqlite, bolt) share the same normalization semantics. Under
+// strings.EqualFold, certain Unicode pairs (e.g. "Σ"/"ς") are treated as
+// duplicates, whereas strings.ToLower treats them as distinct — the shared
+// ToLower semantics are what the parity contract pins.
+func NormalizeName(name string) string {
+	return strings.ToLower(name)
+}
 
 // Storage is the single contract every persistence backend must satisfy.
 // All methods take a context.Context so backends can support cancellation/timeouts.

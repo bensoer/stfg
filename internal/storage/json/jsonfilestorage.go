@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"stfg/internal/storage"
@@ -25,6 +26,7 @@ const (
 type FileStorage struct {
 	dir      string
 	muByPath sync.Map // map[string]*sync.Mutex
+	closed   atomic.Bool
 }
 
 // NewJSON returns the JSON-backed storage. The cache directory is resolved
@@ -62,9 +64,25 @@ var _ storage.Storage = (*FileStorage)(nil)
 
 // --- Lifecycle ---
 
-func (f *FileStorage) Close() error { return nil }
+// checkClosed returns a non-nil error if the storage has been closed. It is
+// called at the top of every public method so post-Close calls fail loudly
+// instead of silently operating on a defunct store.
+func (f *FileStorage) checkClosed() error {
+	if f.closed.Load() {
+		return errors.New("storage: closed")
+	}
+	return nil
+}
+
+func (f *FileStorage) Close() error {
+	f.closed.Store(true)
+	return nil
+}
 
 func (f *FileStorage) Migrate(ctx context.Context) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	if err := f.ensureEmpty(f.groceriesPath(), []storage.GroceryItem{}); err != nil {
 		return err
 	}
@@ -276,6 +294,9 @@ func (f *FileStorage) loadGroceries(path string) ([]storage.GroceryItem, error) 
 }
 
 func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(item.Name) == "" {
 		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
@@ -288,7 +309,7 @@ func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) 
 		return err
 	}
 	for _, existing := range groceries {
-		if strings.EqualFold(existing.Name, item.Name) {
+		if storage.NormalizeName(existing.Name) == storage.NormalizeName(item.Name) {
 			return fmt.Errorf("%w: %s", storage.ErrDuplicate, item.Name)
 		}
 	}
@@ -297,6 +318,9 @@ func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) 
 }
 
 func (f *FileStorage) RemoveGrocery(ctx context.Context, name string) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
@@ -310,8 +334,9 @@ func (f *FileStorage) RemoveGrocery(ctx context.Context, name string) error {
 	}
 	found := false
 	filtered := make([]storage.GroceryItem, 0, len(groceries))
+	key := storage.NormalizeName(name)
 	for _, existing := range groceries {
-		if strings.EqualFold(existing.Name, name) {
+		if storage.NormalizeName(existing.Name) == key {
 			found = true
 			continue
 		}
@@ -324,6 +349,9 @@ func (f *FileStorage) RemoveGrocery(ctx context.Context, name string) error {
 }
 
 func (f *FileStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem, error) {
+	if err := f.checkClosed(); err != nil {
+		return nil, err
+	}
 	path := f.groceriesPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -331,6 +359,9 @@ func (f *FileStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem,
 }
 
 func (f *FileStorage) HasGrocery(ctx context.Context, name string) (bool, error) {
+	if err := f.checkClosed(); err != nil {
+		return false, err
+	}
 	if strings.TrimSpace(name) == "" {
 		return false, fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
@@ -338,8 +369,9 @@ func (f *FileStorage) HasGrocery(ctx context.Context, name string) (bool, error)
 	if err != nil {
 		return false, err
 	}
+	key := storage.NormalizeName(name)
 	for _, existing := range groceries {
-		if strings.EqualFold(existing.Name, name) {
+		if storage.NormalizeName(existing.Name) == key {
 			return true, nil
 		}
 	}
@@ -364,6 +396,9 @@ func (f *FileStorage) loadFlyers(path string) ([]storage.Flyer, error) {
 }
 
 func (f *FileStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -382,6 +417,9 @@ func (f *FileStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
 }
 
 func (f *FileStorage) RemoveFlyer(ctx context.Context, id int64) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -405,11 +443,21 @@ func (f *FileStorage) RemoveFlyer(ctx context.Context, id int64) error {
 	if err := f.writeFile(path, filtered); err != nil {
 		return err
 	}
-	os.Remove(f.flyerItemsPath(id))
+	// Remove the flyer's items file under the per-flyer items-path mutex
+	// (while still holding the flyers-index mutex above) to prevent a torn
+	// write racing with a concurrent AddFlyerItem that holds the items-path
+	// mutex. Lock ordering: flyers-index => items-path.
+	itemsPath := f.flyerItemsPath(id)
+	itemsMu := f.lockPath(itemsPath)
+	os.Remove(itemsPath)
+	f.unlockPath(itemsMu)
 	return nil
 }
 
 func (f *FileStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, error) {
+	if err := f.checkClosed(); err != nil {
+		return nil, err
+	}
 	flyers, err := f.ListFlyers(ctx)
 	if err != nil {
 		return nil, err
@@ -423,6 +471,9 @@ func (f *FileStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, e
 }
 
 func (f *FileStorage) ListFlyers(ctx context.Context) ([]storage.Flyer, error) {
+	if err := f.checkClosed(); err != nil {
+		return nil, err
+	}
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -430,6 +481,9 @@ func (f *FileStorage) ListFlyers(ctx context.Context) ([]storage.Flyer, error) {
 }
 
 func (f *FileStorage) HasFlyer(ctx context.Context, id int64) (bool, error) {
+	if err := f.checkClosed(); err != nil {
+		return false, err
+	}
 	flyers, err := f.ListFlyers(ctx)
 	if err != nil {
 		return false, err
@@ -460,6 +514,23 @@ func (f *FileStorage) loadFlyerItems(path string) ([]storage.FlyerItem, error) {
 }
 
 func (f *FileStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
+	// Verify the parent flyer exists. HasFlyer acquires/releases the
+	// flyers-index mutex internally. There is an inherent TOCTOU window
+	// between this check and the items-path write below (the flyer could be
+	// removed concurrently), but holding both locks simultaneously is avoided
+	// to prevent deadlock with RemoveFlyer/PruneExpired, which always acquire
+	// flyers-index => items-path in that order.
+	has, err := f.HasFlyer(ctx, item.FlyerID)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return fmt.Errorf("%w: flyer %d", storage.ErrNotFound, item.FlyerID)
+	}
+
 	path := f.flyerItemsPath(item.FlyerID)
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -478,6 +549,9 @@ func (f *FileStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) 
 }
 
 func (f *FileStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	path := f.flyerItemsPath(flyerID)
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -502,6 +576,9 @@ func (f *FileStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64
 }
 
 func (f *FileStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]storage.FlyerItem, error) {
+	if err := f.checkClosed(); err != nil {
+		return nil, err
+	}
 	path := f.flyerItemsPath(flyerID)
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -509,6 +586,9 @@ func (f *FileStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]stor
 }
 
 func (f *FileStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (bool, error) {
+	if err := f.checkClosed(); err != nil {
+		return false, err
+	}
 	items, err := f.ListFlyerItems(ctx, flyerID)
 	if err != nil {
 		return false, err
@@ -524,6 +604,9 @@ func (f *FileStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (
 // --- Maintenance ---
 
 func (f *FileStorage) PruneExpired(ctx context.Context, now time.Time) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
 	path := f.flyersIndexPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -535,7 +618,14 @@ func (f *FileStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	current := make([]storage.Flyer, 0, len(flyers))
 	for _, flyer := range flyers {
 		if !flyer.ValidTo.IsZero() && flyer.ValidTo.Before(now) {
-			os.Remove(f.flyerItemsPath(flyer.ID))
+			// Remove the flyer's items file under the per-flyer items-path mutex
+			// (while still holding the flyers-index mutex above) to prevent a torn
+			// write racing with a concurrent AddFlyerItem that holds the
+			// items-path mutex. Lock ordering: flyers-index => items-path.
+			itemsPath := f.flyerItemsPath(flyer.ID)
+			itemsMu := f.lockPath(itemsPath)
+			os.Remove(itemsPath)
+			f.unlockPath(itemsMu)
 			continue
 		}
 		current = append(current, flyer)

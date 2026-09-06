@@ -283,7 +283,7 @@ func (s *SQLiteStorage) AddGrocery(ctx context.Context, item storage.GroceryItem
 	}
 	res, err := s.db.ExecContext(ctx,
 		"INSERT INTO groceries (name, display_name, embedding) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING",
-		strings.ToLower(item.Name), item.Name, embeddingToBytes(item.Embedding))
+		storage.NormalizeName(item.Name), item.Name, embeddingToBytes(item.Embedding))
 	if err != nil {
 		return fmt.Errorf("sqlite: insert grocery: %w", err)
 	}
@@ -302,7 +302,7 @@ func (s *SQLiteStorage) RemoveGrocery(ctx context.Context, name string) error {
 		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
 	res, err := s.db.ExecContext(ctx,
-		"DELETE FROM groceries WHERE name = ?", strings.ToLower(name))
+		"DELETE FROM groceries WHERE name = ?", storage.NormalizeName(name))
 	if err != nil {
 		return fmt.Errorf("sqlite: remove grocery: %w", err)
 	}
@@ -351,7 +351,7 @@ func (s *SQLiteStorage) HasGrocery(ctx context.Context, name string) (bool, erro
 	}
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM groceries WHERE name = ?)", strings.ToLower(name)).
+		"SELECT EXISTS(SELECT 1 FROM groceries WHERE name = ?)", storage.NormalizeName(name)).
 		Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("sqlite: has grocery: %w", err)

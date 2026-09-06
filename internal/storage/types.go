@@ -15,16 +15,16 @@ type Flyer struct {
 	ValidTo   time.Time `json:"valid_to"`
 	Name      string    `json:"name"`
 	Merchant  string    `json:"merchant"`
-	Stores    []Store   `json:"stores,omitempty"`
+	Stores    []Store   `json:"stores"`
 }
 
 // FlyerItem is one item inside a flyer.
 type FlyerItem struct {
-	ID   int64  `json:"id"`
-	FlyerID int64 `json:"flyer_id"`
-	Name  string `json:"name"`
-	Brand string `json:"brand,omitempty"`
-	Price string `json:"price,omitempty"`
+	ID      int64  `json:"id"`
+	FlyerID int64  `json:"flyer_id"`
+	Name    string `json:"name"`
+	Brand   string `json:"brand,omitempty"`
+	Price   string `json:"price,omitempty"`
 
 	ImageURL string `json:"image_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`

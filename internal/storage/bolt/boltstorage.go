@@ -143,7 +143,7 @@ func (s *BoltStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) 
 	if strings.TrimSpace(item.Name) == "" {
 		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
-	key := strings.ToLower(item.Name)
+	key := storage.NormalizeName(item.Name)
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGroceries))
 		existing := b.Get([]byte(key))
@@ -163,7 +163,7 @@ func (s *BoltStorage) RemoveGrocery(ctx context.Context, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
-	key := strings.ToLower(name)
+	key := storage.NormalizeName(name)
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGroceries))
 		existing := b.Get([]byte(key))
@@ -196,7 +196,7 @@ func (s *BoltStorage) HasGrocery(ctx context.Context, name string) (bool, error)
 	if strings.TrimSpace(name) == "" {
 		return false, fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
 	}
-	key := strings.ToLower(name)
+	key := storage.NormalizeName(name)
 	var found bool
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGroceries))

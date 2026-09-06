@@ -164,6 +164,47 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 		}
 	})
 
+	t.Run("Groceries_Unicode_CaseFold_FinalSigma", func(t *testing.T) {
+		s := newStore(t, factory)
+		// All three backends key groceries by strings.ToLower (via
+		// storage.NormalizeName). Under ToLower, "Σ" (U+03A3) maps to "σ"
+		// (U+03C3) and "ς" (U+03C2) maps to "ς" (U+03C2) — distinct code
+		// points, so both are accepted as separate items. strings.EqualFold
+		// would treat them as the same (case-fold maps both final-sigma and
+		// sigma to σ), which is why the backends were unified on ToLower.
+		for _, name := range []string{"Σ", "ς"} {
+			if err := s.AddGrocery(ctx, storage.GroceryItem{Name: name}); err != nil {
+				t.Fatalf("AddGrocery(%s): %v", name, err)
+			}
+		}
+		for _, name := range []string{"Σ", "ς"} {
+			has, err := s.HasGrocery(ctx, name)
+			if err != nil {
+				t.Fatalf("HasGrocery(%s): %v", name, err)
+			}
+			if !has {
+				t.Fatalf("HasGrocery(%s) = false; want true", name)
+			}
+		}
+		gs, err := s.ListGroceries(ctx)
+		if err != nil {
+			t.Fatalf("ListGroceries: %v", err)
+		}
+		if len(gs) != 2 {
+			t.Fatalf("expected 2 distinct groceries, got %d: %+v", len(gs), gs)
+		}
+		seen := map[string]bool{}
+		for _, g := range gs {
+			if seen[g.Name] {
+				t.Errorf("duplicate display name %q (ToUpper-fold mismatch)", g.Name)
+			}
+			seen[g.Name] = true
+		}
+		if !seen["Σ"] || !seen["ς"] {
+			t.Fatalf("display case not preserved: %+v", gs)
+		}
+	})
+
 	t.Run("Groceries_RemoveNotFound", func(t *testing.T) {
 		s := newStore(t, factory)
 		err := s.RemoveGrocery(ctx, "absent")
@@ -485,8 +526,8 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 	t.Run("PruneExpired_SubSecond_Precision", func(t *testing.T) {
 		s := newStore(t, factory)
 		// Same wall-second boundaries: valid_to before a fractional now must prune.
-		nowLate, _ := time.Parse(time.RFC3339Nano, "2025-03-01T10:00:00.500Z")
-		validToEarly, _ := time.Parse(time.RFC3339Nano, "2025-03-01T10:00:00.000Z")
+		nowLate := mustTime(t, "2025-03-01T10:00:00.500Z")
+		validToEarly := mustTime(t, "2025-03-01T10:00:00.000Z")
 		if err := s.AddFlyer(ctx, storage.Flyer{ID: 1, ValidFrom: validToEarly.Add(-time.Hour), ValidTo: validToEarly, Name: "Early", Merchant: "M"}); err != nil {
 			t.Fatalf("AddFlyer early: %v", err)
 		}
@@ -498,8 +539,8 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 		}
 
 		// valid_to after a fractional now must survive.
-		nowEarly, _ := time.Parse(time.RFC3339Nano, "2025-03-01T10:00:00.400Z")
-		validToLate, _ := time.Parse(time.RFC3339Nano, "2025-03-01T10:00:00.600Z")
+		nowEarly := mustTime(t, "2025-03-01T10:00:00.400Z")
+		validToLate := mustTime(t, "2025-03-01T10:00:00.600Z")
 		if err := s.AddFlyer(ctx, storage.Flyer{ID: 2, ValidFrom: validToLate.Add(-time.Hour), ValidTo: validToLate, Name: "Late", Merchant: "M"}); err != nil {
 			t.Fatalf("AddFlyer late: %v", err)
 		}
@@ -543,12 +584,15 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 	t.Run("Concurrent_AddDistinctGroceries", func(t *testing.T) {
 		s := newStore(t, factory)
 		const n = 40
+		// Pre-compute the embedding so mustEmbed (which can call t.Fatalf) is
+		// never invoked from a non-test goroutine.
+		emb := mustEmbed(t, 3)
 		var wg sync.WaitGroup
 		wg.Add(n)
 		for i := 0; i < n; i++ {
 			go func(i int) {
 				defer wg.Done()
-				if err := s.AddGrocery(ctx, storage.GroceryItem{Name: fmt.Sprintf("item_%03d", i), Embedding: mustEmbed(t, 3)}); err != nil {
+				if err := s.AddGrocery(ctx, storage.GroceryItem{Name: fmt.Sprintf("item_%03d", i), Embedding: emb}); err != nil {
 					t.Errorf("AddGrocery item_%03d: %v", i, err)
 				}
 			}(i)
@@ -566,6 +610,9 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 	t.Run("Concurrent_AddSameGrocery_SingleSuccess", func(t *testing.T) {
 		s := newStore(t, factory)
 		const n = 20
+		// Pre-compute the embedding so mustEmbed (which can call t.Fatalf) is
+		// never invoked from a non-test goroutine.
+		emb := mustEmbed(t, 3)
 		var (
 			wg          sync.WaitGroup
 			mu          sync.Mutex
@@ -577,7 +624,7 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 		for i := 0; i < n; i++ {
 			go func() {
 				defer wg.Done()
-				err := s.AddGrocery(ctx, storage.GroceryItem{Name: "milk", Embedding: mustEmbed(t, 3)})
+				err := s.AddGrocery(ctx, storage.GroceryItem{Name: "milk", Embedding: emb})
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
