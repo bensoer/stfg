@@ -6,7 +6,9 @@ import (
 
 	"github.com/h2non/gentleman"
 
+	"stfg/internal"
 	"stfg/internal/reconciler/scrape"
+	"stfg/internal/storage"
 )
 
 type Client struct {
@@ -19,13 +21,13 @@ func NewClient() *Client {
 	}
 }
 
-func (c *Client) GetRetailGroups(postalCode string) ([]scrape.RetailGroup, error) {
+func (c *Client) GetRetailGroups(postalCode string) ([]storage.Flyer, error) {
 	resp, err := c.GetFlyers(postalCode)
 	if err != nil {
 		return nil, err
 	}
 
-	rg := []scrape.RetailGroup{}
+	flyers := []storage.Flyer{}
 	for _, flyer := range resp.Flyers {
 
 		storeResp, err := c.GetNearbyStores(flyer.ID, postalCode)
@@ -33,9 +35,9 @@ func (c *Client) GetRetailGroups(postalCode string) ([]scrape.RetailGroup, error
 			return nil, err
 		}
 
-		rgl := []scrape.RetailGroupLocation{}
+		stores := []storage.Store{}
 		for _, store := range *storeResp {
-			rgl = append(rgl, scrape.RetailGroupLocation{
+			stores = append(stores, storage.Store{
 				ID:         store.ID,
 				Address:    store.Address,
 				City:       store.City,
@@ -44,46 +46,69 @@ func (c *Client) GetRetailGroups(postalCode string) ([]scrape.RetailGroup, error
 			})
 		}
 
-		validFrom := flyer.ValidFrom
-		if validFrom == nil {
-			validFrom = flyer.AvailableFrom
+		// Resolve the effective valid-from and valid-to times.
+		// Prefer ValidFrom/ValidTo with AvailableFrom/AvailableTo
+		// as fallback. Skip the flyer if both are nil to avoid
+		// a nil-pointer dereference.
+		validFromStr := flyer.ValidFrom
+		if validFromStr == nil {
+			validFromStr = flyer.AvailableFrom
+		}
+		if validFromStr == nil {
+			continue
+		}
+		from, err := internal.ParseDate(*validFromStr)
+		if err != nil {
+			return nil, err
 		}
 
-		validTo := flyer.ValidTo
-		if validTo == nil {
-			validTo = flyer.AvailableTo
+		validToStr := flyer.ValidTo
+		if validToStr == nil {
+			validToStr = flyer.AvailableTo
+		}
+		if validToStr == nil {
+			continue
+		}
+		to, err := internal.ParseDate(*validToStr)
+		if err != nil {
+			return nil, err
 		}
 
-		rg = append(rg, scrape.RetailGroup{
+		flyers = append(flyers, storage.Flyer{
 			ID:        flyer.ID,
-			ValidFrom: *validFrom,
-			ValidTo:   *validTo,
+			ValidFrom: from,
+			ValidTo:   to,
 			Name:      flyer.Name,
 			Merchant:  flyer.Merchant,
-
-			Locations: rgl,
+			Stores:    stores,
 		})
 	}
 
-	return rg, nil
+	return flyers, nil
 }
 
-func (c *Client) GetRetailGroupItems(retailGroupId int64) ([]scrape.RetailGroupItem, error) {
+func (c *Client) GetRetailGroupItems(retailGroupId int64) ([]storage.FlyerItem, error) {
 	resp, err := c.GetFlyerItems(retailGroupId)
 	if err != nil {
 		return nil, err
 	}
 
-	rgis := []scrape.RetailGroupItem{}
+	rgis := []storage.FlyerItem{}
 	for _, flyerItem := range *resp {
-		rgis = append(rgis, scrape.RetailGroupItem{
-			ID:             flyerItem.ID,
-			RetailGroupId:  retailGroupId,
-			Name:           flyerItem.Name,
-			Brand:          flyerItem.Brand,
-			Price:          flyerItem.Price,
-			CutoutImageURL: flyerItem.CutoutImageURL,
-			VideoURL:       flyerItem.VideoURL,
+		var videoURL string
+		if flyerItem.VideoURL != nil {
+			videoURL = *flyerItem.VideoURL
+		}
+
+		rgis = append(rgis, storage.FlyerItem{
+			ID:          flyerItem.ID,
+			FlyerID:     retailGroupId,
+			Name:        flyerItem.Name,
+			Brand:       flyerItem.Brand,
+			Price:       flyerItem.Price,
+			ImageURL:    flyerItem.CutoutImageURL,
+			VideoURL:    videoURL,
+			DisplayType: flyerItem.DisplayType,
 		})
 	}
 
@@ -173,3 +198,5 @@ func (c *Client) GetNearbyStores(flyerID int64, postalCode string) (*GetStoresNe
 
 	return &parsed, nil
 }
+
+var _ scrape.ScrapeClient = (*Client)(nil)

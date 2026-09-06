@@ -45,7 +45,7 @@ func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(flyerItems []sto
 			"brand":       flyerItem.Brand,
 			"name":        flyerItem.Name,
 			"displayType": flyerItem.DisplayType,
-			"imgURL":      flyerItem.CutoutImageURL,
+			"imgURL":      flyerItem.ImageURL,
 		})
 	}
 
