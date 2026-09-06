@@ -79,4 +79,7 @@ func (b *BoltStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	return ErrNotImplemented
 }
 
+// Compile-time assertion that *BoltStorage satisfies storage.Storage.
+// If *BoltStorage ever stops implementing the interface (e.g. a method
+// signature changed), this line will produce a clear compile error.
 var _ storage.Storage = (*BoltStorage)(nil)
