@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.etcd.io/bbolt"
@@ -27,42 +28,71 @@ const (
 	bucketStores        = "stores"
 )
 
-// BoltStorage implements storage.Storage backed by BoltDB.
-type BoltStorage struct {
-	db *bbolt.DB
-	dir string
-	fileName string
+// Options configures the BoltDB storage backend.
+type Options struct {
+	// CacheDir is the directory where the BoltDB database file is created.
+	// If empty, storage.CacheDir() is used.
+	CacheDir string
+	// BoltFileName overrides the default database file name (stfg.bolt).
+	// Mainly useful for tests.
+	BoltFileName string
 }
 
-// NewBolt creates a new BoltStorage. The caller must call Close.
-func NewBolt(ctx context.Context, fileName string) (*BoltStorage, error) {
-	nf := defaultBoltFileName
-	if fileName != "" {
-		nf = fileName
-	}
-	dir, err := storage.CacheDir()
-	if err != nil {
-		return nil, err
+// BoltStorage implements storage.Storage backed by BoltDB.
+type BoltStorage struct {
+	db       *bbolt.DB
+	dir      string
+	fileName string
+	once     sync.Once
+	closeErr error
+}
+
+var _ storage.Storage = (*BoltStorage)(nil)
+
+// NewBolt opens (creating the directory and file as needed) and migrates a
+// BoltDB storage backend. The caller must call Close.
+func NewBolt(ctx context.Context, opts Options) (*BoltStorage, error) {
+	dir := opts.CacheDir
+	if dir == "" {
+		var err error
+		dir, err = storage.CacheDir()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create cache dir: %w", err)
+		return nil, fmt.Errorf("bolt: create cache dir: %w", err)
 	}
-	dbPath := filepath.Join(dir, nf)
+
+	fileName := opts.BoltFileName
+	if fileName == "" {
+		fileName = defaultBoltFileName
+	}
+
+	dbPath := filepath.Join(dir, fileName)
 	db, err := bbolt.Open(dbPath, 0o600, nil)
 	if err != nil {
-		return nil, fmt.Errorf("open bolt: %w", err)
+		return nil, fmt.Errorf("bolt: open: %w", err)
 	}
-	s := &BoltStorage{db: db, dir: dir, fileName: nf}
+
+	s := &BoltStorage{db: db, dir: dir, fileName: fileName}
 	if err := s.Migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
+
 	return s, nil
 }
 
-// Close closes the underlying BoltDB database.
+// Close closes the underlying BoltDB database. Safe to call multiple times.
 func (s *BoltStorage) Close() error {
-	return s.db.Close()
+	s.once.Do(func() {
+		if s.db != nil {
+			s.closeErr = s.db.Close()
+			s.db = nil
+		}
+	})
+	return s.closeErr
 }
 
 // Migrate creates buckets if missing. Idempotent.
@@ -88,7 +118,13 @@ func (s *BoltStorage) Migrate(ctx context.Context) error {
 			// Store version as big-endian int64
 			buf := make([]byte, 8)
 			binary.BigEndian.PutUint64(buf, 1)
-			return meta.Put([]byte("schema_version"), buf)
+			if err := meta.Put([]byte("schema_version"), buf); err != nil {
+				return err
+			}
+			// Compaction is intentionally not performed in Migrate: bbolt has
+			// no *DB.Shrink method (only package-level bbolt.Compact, which
+			// needs a full-DB copy per Open and is not acceptable for a CLI).
+			// Deferred; see plan open-question #6.
 		}
 		return nil
 	})
@@ -126,7 +162,7 @@ func (s *BoltStorage) RemoveGrocery(ctx context.Context, name string) error {
 
 // ListGroceries returns all grocery items ordered by name (lexicographic on lowercased key).
 func (s *BoltStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem, error) {
-	var out []storage.GroceryItem
+	out := []storage.GroceryItem{}
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGroceries))
 		return b.ForEach(func(k, v []byte) error {
@@ -249,7 +285,7 @@ func (s *BoltStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, e
 
 // ListFlyers returns all flyers ordered by ID.
 func (s *BoltStorage) ListFlyers(ctx context.Context) ([]storage.Flyer, error) {
-	var out []storage.Flyer
+	out := []storage.Flyer{}
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		flyersB := tx.Bucket([]byte(bucketFlyers))
 		storesB := tx.Bucket([]byte(bucketStores))
@@ -295,6 +331,9 @@ func (s *BoltStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) 
 	binary.BigEndian.PutUint64(itemIDBytes, uint64(item.ID))
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		itemsB := tx.Bucket([]byte(bucketFlyerItems))
+		if tx.Bucket([]byte(bucketFlyers)).Get(flyerIDBytes) == nil {
+			return fmt.Errorf("%w: flyer %d", storage.ErrNotFound, item.FlyerID)
+		}
 		flyerB := itemsB.Bucket(flyerIDBytes)
 		if flyerB == nil {
 			// Create sub-bucket for this flyer
@@ -303,6 +342,9 @@ func (s *BoltStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) 
 			if err != nil {
 				return err
 			}
+		}
+		if flyerB.Get(itemIDBytes) != nil {
+			return fmt.Errorf("%w: item %d", storage.ErrDuplicate, item.ID)
 		}
 		data, err := json.Marshal(item)
 		if err != nil {
@@ -336,7 +378,7 @@ func (s *BoltStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64
 func (s *BoltStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]storage.FlyerItem, error) {
 	flyerIDBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(flyerIDBytes, uint64(flyerID))
-	var out []storage.FlyerItem
+	out := []storage.FlyerItem{}
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		itemsB := tx.Bucket([]byte(bucketFlyerItems))
 		flyerB := itemsB.Bucket(flyerIDBytes)
@@ -415,5 +457,3 @@ func (s *BoltStorage) PruneExpired(ctx context.Context, now time.Time) error {
 		return nil
 	})
 }
-
-var _ storage.Storage = (*BoltStorage)(nil)

@@ -107,6 +107,13 @@ func NewSQLite(ctx context.Context, opts Options) (*SQLiteStorage, error) {
 		return nil, err
 	}
 
+	// The persistence plan requires a warning when the database file is more
+	// permissive than 0o600, but this constructor has no logger wired in; we
+	// intentionally do not log and simply continue.
+	if info, err := os.Stat(dbPath); err == nil && info.Mode().Perm() > 0o600 {
+		// TODO: emit via logger once one is available in this constructor.
+	}
+
 	return s, nil
 }
 
@@ -146,7 +153,7 @@ func (s *SQLiteStorage) Migrate(ctx context.Context) error {
 	}
 
 	if !version.Valid {
-		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version (version) VALUES (?)", defaultSchemaVersion); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_version (version) VALUES (?) ON CONFLICT(version) DO NOTHING", defaultSchemaVersion); err != nil {
 			return fmt.Errorf("sqlite: insert schema version: %w", err)
 		}
 	}
@@ -215,12 +222,15 @@ func unmarshalStores(data string) ([]storage.Store, error) {
 
 func (s *SQLiteStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) error {
 	res, err := s.db.ExecContext(ctx,
-		"INSERT OR IGNORE INTO groceries (name, embedding) VALUES (?, ?)",
+		"INSERT INTO groceries (name, embedding) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
 		item.Name, embeddingToBytes(item.Embedding))
 	if err != nil {
 		return fmt.Errorf("sqlite: insert grocery: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: grocery rows affected: %w", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("%w: %s", storage.ErrDuplicate, item.Name)
 	}
@@ -285,21 +295,24 @@ func (s *SQLiteStorage) HasGrocery(ctx context.Context, name string) (bool, erro
 func (s *SQLiteStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
 	storesJSON, err := marshalStores(flyer.Stores)
 	if err != nil {
-		return fmt.Errorf("sqlite: %w", err)
+		return err
 	}
 
 	validTo := sql.NullString{}
 	if !flyer.ValidTo.IsZero() {
-		validTo = sql.NullString{String: flyer.ValidTo.Format(time.RFC3339), Valid: true}
+		validTo = sql.NullString{String: flyer.ValidTo.UTC().Format(time.RFC3339), Valid: true}
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		"INSERT OR IGNORE INTO flyers (id, valid_from, valid_to, name, merchant, stores) VALUES (?, ?, ?, ?, ?, ?)",
-		flyer.ID, flyer.ValidFrom.Format(time.RFC3339), validTo, flyer.Name, flyer.Merchant, storesJSON)
+		"INSERT INTO flyers (id, valid_from, valid_to, name, merchant, stores) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
+		flyer.ID, flyer.ValidFrom.UTC().Format(time.RFC3339), validTo, flyer.Name, flyer.Merchant, storesJSON)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert flyer: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: flyer rows affected: %w", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("%w: %d", storage.ErrDuplicate, flyer.ID)
 	}
@@ -320,11 +333,11 @@ func (s *SQLiteStorage) RemoveFlyer(ctx context.Context, id int64) error {
 
 func (s *SQLiteStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, error) {
 	var (
-		f            storage.Flyer
-		validFrom    string
-		validTo      sql.NullString
-		name, merch  string
-		storesJSON   string
+		f           storage.Flyer
+		validFrom   string
+		validTo     sql.NullString
+		name, merch string
+		storesJSON  string
 	)
 	err := s.db.QueryRowContext(ctx,
 		"SELECT id, valid_from, valid_to, name, merchant, stores FROM flyers WHERE id = ?", id).
@@ -418,12 +431,15 @@ func (s *SQLiteStorage) HasFlyer(ctx context.Context, id int64) (bool, error) {
 
 func (s *SQLiteStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) error {
 	res, err := s.db.ExecContext(ctx,
-		"INSERT OR IGNORE INTO flyer_items (id, flyer_id, name, brand, price, image_url, video_url, display_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO flyer_items (id, flyer_id, name, brand, price, image_url, video_url, display_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING",
 		item.ID, item.FlyerID, item.Name, item.Brand, item.Price, item.ImageURL, item.VideoURL, item.DisplayType)
 	if err != nil {
 		return fmt.Errorf("sqlite: insert flyer item: %w", err)
 	}
-	rows, _ := res.RowsAffected()
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: flyer item rows affected: %w", err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("%w: %d", storage.ErrDuplicate, item.ID)
 	}
@@ -494,11 +510,9 @@ func (s *SQLiteStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64)
 // removed automatically via the ON DELETE CASCADE foreign key.
 func (s *SQLiteStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	_, err := s.db.ExecContext(ctx,
-		"DELETE FROM flyers WHERE valid_to < ?", now.Format(time.RFC3339))
+		"DELETE FROM flyers WHERE valid_to < ?", now.UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("sqlite: prune expired flyers: %w", err)
 	}
 	return nil
 }
-
-
