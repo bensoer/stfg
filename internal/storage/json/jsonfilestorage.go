@@ -58,6 +58,9 @@ func NewJSONAt(ctx context.Context, dir string) (*FileStorage, error) {
 	return f, nil
 }
 
+// Compile-time assertion that *FileStorage satisfies storage.Storage.
+// If *FileStorage ever stops implementing the interface (e.g. a method
+// signature changed), this line will produce a clear compile error.
 var _ storage.Storage = (*FileStorage)(nil)
 
 // --- Lifecycle ---

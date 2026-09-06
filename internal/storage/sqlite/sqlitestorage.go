@@ -79,4 +79,7 @@ func (s *SQLiteStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	return ErrNotImplemented
 }
 
+// Compile-time assertion that *SQLiteStorage satisfies storage.Storage.
+// If *SQLiteStorage ever stops implementing the interface (e.g. a method
+// signature changed), this line will produce a clear compile error.
 var _ storage.Storage = (*SQLiteStorage)(nil)
