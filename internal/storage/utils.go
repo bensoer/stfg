@@ -15,7 +15,7 @@ func CacheDir() (string, error) {
 
 	dir := filepath.Join(base, AppName)
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
 

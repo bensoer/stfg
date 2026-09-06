@@ -16,6 +16,7 @@ func Contains(list []string, target string) bool {
 	return false
 }
 
+// ParseDate parses a date string in RFC3339 or YYYY-MM-DD format.
 func ParseDate(d string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, d)
 	if err == nil {

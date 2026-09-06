@@ -7,7 +7,6 @@ import (
 	"stfg/internal/flyerfinder"
 	"stfg/internal/flyerfinder/flipp"
 	"stfg/internal/reconciler/scrape"
-	"stfg/internal/storage"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -25,19 +24,14 @@ var scrapeFlyersCmd = &cobra.Command{
 
 		finder := flipp.NewFinder()
 		var f flyerfinder.FlyerFinder = finder
-
-		store, err := storage.NewJSONFileStorage()
-		if err != nil {
-			zap.S().Error("Failed To Setup Storage System", err)
-			return
-		}
+		store := getStore(cmd)
 
 		whitelist := viper.GetStringSlice("fly_finder.whitelist")
 		if len(whitelist) == 0 {
 			zap.S().Warn("fly_finder.whitelist is empty; no flyers will match")
 		}
 
-		err = scrape.Reconcile(cmd.Context(), f, store, scrape.ScrapeReconcilerOptions{
+		err := scrape.Reconcile(cmd.Context(), f, store, scrape.ScrapeReconcilerOptions{
 			PostalCode:           postalCode,
 			RetailGroupWhiteList: whitelist,
 		})
@@ -45,6 +39,7 @@ var scrapeFlyersCmd = &cobra.Command{
 		if err != nil {
 			zap.S().Error("Error Scraping Flyers", err)
 		}
+
 	},
 }
 

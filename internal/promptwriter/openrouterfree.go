@@ -36,7 +36,7 @@ func NewOpenRouterFreePromptWriter(pp ProviderPrompter) *OpenRouterFreePromptWri
 	}
 }
 
-func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(flyerItems []storage.FlyerItem, groceryList []string) (map[string][]storage.FlyerItem, error) {
+func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(flyerItems []storage.FlyerItem, groceryList []storage.GroceryItem) (map[string][]storage.FlyerItem, error) {
 
 	minifiedFlyerItems := []map[string]any{}
 	for _, flyerItem := range flyerItems {
@@ -45,7 +45,7 @@ func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(flyerItems []sto
 			"brand":       flyerItem.Brand,
 			"name":        flyerItem.Name,
 			"displayType": flyerItem.DisplayType,
-			"imgURL":      flyerItem.CutoutImageURL,
+			"imgURL":      flyerItem.ImageURL,
 		})
 	}
 
@@ -54,7 +54,12 @@ func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(flyerItems []sto
 		return nil, err
 	}
 
-	groceryJSON, err := json.MarshalIndent(groceryList, "", "  ")
+	groceryNames := make([]string, len(groceryList))
+	for i, g := range groceryList {
+		groceryNames[i] = g.Name
+	}
+
+	groceryJSON, err := json.MarshalIndent(groceryNames, "", "  ")
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +136,7 @@ RetryLoop:
 			for _, flyerItem := range flyerItems {
 				if flyerItem.ID == gfm.FlyerItemId &&
 					flyerItem.Name == gfm.FlyerItemName &&
-					internal.Contains(groceryList, gfm.GroceryItem) {
+					internal.Contains(groceryNames, gfm.GroceryItem) {
 
 					// then this item is indeed a match!
 

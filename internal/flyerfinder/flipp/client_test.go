@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"gopkg.in/h2non/gentleman.v2"
 	gentlemanv2Context "gopkg.in/h2non/gentleman.v2/context"
@@ -164,12 +165,12 @@ func TestFindFlyers_BuildsCanonicalFlyers(t *testing.T) {
 		t.Errorf("flyer merchant: expected 'Test Merchant', got %q", f.Merchant)
 	}
 	// Check dates.
-	expectedValidFrom := "2024-01-01"
-	if f.ValidFrom != expectedValidFrom {
+	expectedValidFrom := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !f.ValidFrom.Equal(expectedValidFrom) {
 		t.Errorf("flyer ValidFrom: expected %s, got %s", expectedValidFrom, f.ValidFrom)
 	}
-	expectedValidTo := "2024-01-31"
-	if f.ValidTo != expectedValidTo {
+	expectedValidTo := time.Date(2024, 1, 31, 0, 0, 0, 0, time.UTC)
+	if !f.ValidTo.Equal(expectedValidTo) {
 		t.Errorf("flyer ValidTo: expected %s, got %s", expectedValidTo, f.ValidTo)
 	}
 	// Check stores.
@@ -261,12 +262,12 @@ func TestFindFlyers_FallsBackToAvailableDates(t *testing.T) {
 
 	f := flyers[0]
 	// Expect ValidFrom/ValidTo to be set from AvailableFrom/AvailableTo.
-	expectedFrom := "2024-02-01"
-	if f.ValidFrom != expectedFrom {
+	expectedFrom := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	if !f.ValidFrom.Equal(expectedFrom) {
 		t.Errorf("flyer ValidFrom: expected %s (from available_from), got %s", expectedFrom, f.ValidFrom)
 	}
-	expectedTo := "2024-02-28"
-	if f.ValidTo != expectedTo {
+	expectedTo := time.Date(2024, 2, 28, 0, 0, 0, 0, time.UTC)
+	if !f.ValidTo.Equal(expectedTo) {
 		t.Errorf("flyer ValidTo: expected %s (from available_to), got %s", expectedTo, f.ValidTo)
 	}
 }
@@ -457,13 +458,13 @@ func TestFindFlyerItems_BuildsCanonicalItems(t *testing.T) {
 	if it1.Price != "$4.99" {
 		t.Errorf("first item price: expected '$4.99', got %q", it1.Price)
 	}
-	if it1.CutoutImageURL != "http://example.com/image.jpg" {
-		t.Errorf("first item CutoutImageURL: expected 'http://example.com/image.jpg', got %q", it1.CutoutImageURL)
+	if it1.ImageURL != "http://example.com/image.jpg" {
+		t.Errorf("first item ImageURL: expected 'http://example.com/image.jpg', got %q", it1.ImageURL)
 	}
-	if it1.VideoURL == nil {
-		t.Error("first item VideoURL: expected non-nil pointer")
-	} else if *it1.VideoURL != "http://example.com/video.mp4" {
-		t.Errorf("first item VideoURL: expected 'http://example.com/video.mp4', got %q", *it1.VideoURL)
+	if it1.VideoURL == "" {
+		t.Error("first item VideoURL: expected non-empty string")
+	} else if it1.VideoURL != "http://example.com/video.mp4" {
+		t.Errorf("first item VideoURL: expected 'http://example.com/video.mp4', got %q", it1.VideoURL)
 	}
 
 	// Second item with nil video URL.
@@ -471,12 +472,12 @@ func TestFindFlyerItems_BuildsCanonicalItems(t *testing.T) {
 	if it2.ID != 1002 {
 		t.Errorf("second item ID: expected 1002, got %d", it2.ID)
 	}
-	if it2.VideoURL != nil {
-		t.Error("second item VideoURL: expected nil, got non-nil")
+	if it2.VideoURL != "" {
+		t.Error("second item VideoURL: expected empty string, got non-empty")
 	}
 }
 
-// TestFindFlyerItems_NilVideoURL tests that when the API sends null for video_url, the client sets VideoURL to nil.
+// TestFindFlyerItems_NilVideoURL tests that when the API sends null for video_url, the client sets VideoURL to empty string.
 func TestFindFlyerItems_NilVideoURL(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -520,7 +521,7 @@ func TestFindFlyerItems_NilVideoURL(t *testing.T) {
 		t.Fatalf("expected 1 item, got %d", len(items))
 	}
 
-	if items[0].VideoURL != nil {
-		t.Error("expected VideoURL to be nil when API sends nil")
+	if items[0].VideoURL != "" {
+		t.Error("expected empty VideoURL when API sends null")
 	}
 }
