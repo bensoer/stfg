@@ -3,10 +3,10 @@ package flipp
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/h2non/gentleman"
 
-	"stfg/internal"
 	"stfg/internal/reconciler/scrape"
 	"stfg/internal/storage"
 )
@@ -21,8 +21,8 @@ func NewClient() *Client {
 	}
 }
 
-func (c *Client) GetRetailGroups(postalCode string) ([]storage.Flyer, error) {
-	resp, err := c.GetFlyers(postalCode)
+func (c *Client) GetFlyers(postalCode string) ([]storage.Flyer, error) {
+	resp, err := c.GetFlyersResponse(postalCode)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +57,7 @@ func (c *Client) GetRetailGroups(postalCode string) ([]storage.Flyer, error) {
 		if validFromStr == nil {
 			continue
 		}
-		from, err := internal.ParseDate(*validFromStr)
+		from, err := time.Parse(time.RFC3339, *validFromStr)
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +69,7 @@ func (c *Client) GetRetailGroups(postalCode string) ([]storage.Flyer, error) {
 		if validToStr == nil {
 			continue
 		}
-		to, err := internal.ParseDate(*validToStr)
+		to, err := time.Parse(time.RFC3339, *validToStr)
 		if err != nil {
 			return nil, err
 		}
@@ -87,22 +87,22 @@ func (c *Client) GetRetailGroups(postalCode string) ([]storage.Flyer, error) {
 	return flyers, nil
 }
 
-func (c *Client) GetRetailGroupItems(retailGroupId int64) ([]storage.FlyerItem, error) {
-	resp, err := c.GetFlyerItems(retailGroupId)
+func (c *Client) GetFlyerItems(flyerID int64) ([]storage.FlyerItem, error) {
+	resp, err := c.GetFlyerItemsResponse(flyerID)
 	if err != nil {
 		return nil, err
 	}
 
-	rgis := []storage.FlyerItem{}
+	items := []storage.FlyerItem{}
 	for _, flyerItem := range *resp {
 		var videoURL string
 		if flyerItem.VideoURL != nil {
 			videoURL = *flyerItem.VideoURL
 		}
 
-		rgis = append(rgis, storage.FlyerItem{
+		items = append(items, storage.FlyerItem{
 			ID:          flyerItem.ID,
-			FlyerID:     retailGroupId,
+			FlyerID:     flyerID,
 			Name:        flyerItem.Name,
 			Brand:       flyerItem.Brand,
 			Price:       flyerItem.Price,
@@ -112,11 +112,10 @@ func (c *Client) GetRetailGroupItems(retailGroupId int64) ([]storage.FlyerItem, 
 		})
 	}
 
-	return rgis, nil
-
+	return items, nil
 }
 
-func (c *Client) GetFlyers(postalCode string) (*GetFlyersResponse, error) {
+func (c *Client) GetFlyersResponse(postalCode string) (*GetFlyersResponse, error) {
 	sid := generateSID()
 
 	req := c.base.Request()
@@ -144,7 +143,7 @@ func (c *Client) GetFlyers(postalCode string) (*GetFlyersResponse, error) {
 	return &parsed, nil
 }
 
-func (c *Client) GetFlyerItems(flyerID int64) (*GetFlyerItemsResponse, error) {
+func (c *Client) GetFlyerItemsResponse(flyerID int64) (*GetFlyerItemsResponse, error) {
 	req := c.base.Request()
 
 	url := fmt.Sprintf(

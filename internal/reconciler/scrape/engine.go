@@ -19,7 +19,7 @@ func Reconcile(ctx context.Context, scrapeClient ScrapeClient, storageClient sto
 		return err
 	}
 
-	flyers, err := scrapeClient.GetRetailGroups(options.PostalCode)
+	flyers, err := scrapeClient.GetFlyers(options.PostalCode)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func Reconcile(ctx context.Context, scrapeClient ScrapeClient, storageClient sto
 			return err
 		}
 
-		items, err := scrapeClient.GetRetailGroupItems(flyer.ID)
+		items, err := scrapeClient.GetFlyerItems(flyer.ID)
 		if err != nil {
 			return err
 		}

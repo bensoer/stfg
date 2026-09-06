@@ -22,6 +22,7 @@ THE SOFTWARE.
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -30,7 +31,36 @@ import (
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"stfg/internal/storage"
+	"stfg/internal/storage/json"
 )
+
+// storageCtxKey is the context key used to pass the storage.Storage
+// handle from the groceries command's PersistentPreRunE to subcommand Run handlers.
+type storageCtxKey struct{}
+
+// getStore retrieves the storage.Storage handle from the cobra command context.
+// The storage handle is set by the root command's PersistentPreRunE, so every
+// subcommand has access to it. If the handle is missing (should not happen in
+// normal operation) a fresh store is created as a fallback.
+func getStore(cmd *cobra.Command) storage.Storage {
+	store, ok := cmd.Context().Value(storageCtxKey{}).(storage.Storage)
+	if ok && store != nil {
+		return store
+	}
+	// Fallback: initialize a fresh store. This should only trigger if
+	// PersistentPreRunE failed silently or during testing.
+	store, err := json.NewJSON(cmd.Context())
+	if err != nil {
+		// Last resort — returning nil will cause a panic at the call site
+		// which is better than silently proceeding without storage.
+		return nil
+	}
+	ctx := context.WithValue(cmd.Context(), storageCtxKey{}, store)
+	cmd.SetContext(ctx)
+	return store
+}
 
 var cfgFile string
 var logFile string
@@ -76,6 +106,16 @@ func init() {
 		}
 
 		zap.ReplaceGlobals(logger.Desugar())
+
+		// Initialize storage for every command. The handle is stored on
+		// the command context so subcommands can retrieve it via getStore().
+		store, err := json.NewJSON(cmd.Context())
+		if err != nil {
+			return err
+		}
+		ctx := context.WithValue(cmd.Context(), storageCtxKey{}, store)
+		cmd.SetContext(ctx)
+
 		return nil
 	}
 

@@ -3,13 +3,12 @@ package cmd
 import (
 	"fmt"
 
-	"stfg/internal/promptwriter"
-	"stfg/internal/provider"
-	"stfg/internal/storage"
-
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
+
+	"stfg/internal/promptwriter"
+	"stfg/internal/provider"
 )
 
 // FindDealsCmd represents the find-deals command
@@ -18,8 +17,9 @@ var FindDealsCmd = &cobra.Command{
 	Short: "Find deals in flyers matching your grocery list",
 	Long:  `Search through downloaded flyers to find items from your grocery list that are on sale.`,
 	Run: func(cmd *cobra.Command, args []string) {
+		store := getStore(cmd)
 
-		flyers, err := storage.LoadAllFlyers()
+		flyers, err := store.ListFlyers(cmd.Context())
 		if err != nil {
 			zap.S().Errorf("Error Loading Flyers %v", err)
 			return
@@ -30,8 +30,7 @@ var FindDealsCmd = &cobra.Command{
 			return
 		}
 
-		// Load grocery list
-		groceries, err := storage.LoadGroceries()
+		groceries, err := store.ListGroceries(cmd.Context())
 		if err != nil {
 			zap.S().Errorf("Error loading groceries: %v", err)
 			return
@@ -42,26 +41,19 @@ var FindDealsCmd = &cobra.Command{
 			return
 		}
 
-		// Initialize OpenRouter client
 		apiKey := viper.GetString("api_key")
 		if apiKey == "" {
-			// Fallback to flag if not set in config
 			apiKeyFlag, _ := cmd.Flags().GetString("api-key")
 			apiKey = apiKeyFlag
 		}
 		client := provider.NewClient(apiKey)
-
-		// Initialize prompt writer
 		promptWriter := promptwriter.NewOpenRouterFreePromptWriter(client)
 
 		zap.S().Infof("Searching for deals on %d grocery items across %d flyers...\n\n", len(groceries), len(flyers))
 
-		// Search through each flyer
 		totalDeals := 0
 		for _, flyer := range flyers {
-
-			flyerItems, err := storage.LoadFlyerItems(flyer.ID)
-			// Load flyer items
+			flyerItems, err := store.ListFlyerItems(cmd.Context(), flyer.ID)
 			if err != nil {
 				zap.S().Warnf("Error loading flyer %d: %v", flyer.ID, err)
 				continue
@@ -71,7 +63,6 @@ var FindDealsCmd = &cobra.Command{
 				continue
 			}
 
-			// Find matches using OpenRouter
 			matches, err := promptWriter.GetFlyerItemsOnGroceryList(flyerItems, groceries)
 			if err != nil {
 				zap.S().Warnf("Error processing flyer %d: %v", flyer.ID, err)

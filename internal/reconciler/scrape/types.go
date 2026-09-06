@@ -10,8 +10,6 @@ type ScrapeReconcilerOptions struct {
 }
 
 type ScrapeClient interface {
-	GetRetailGroups(postalCode string) ([]storage.Flyer, error)
-	GetRetailGroupItems(retailGroupId int64) ([]storage.FlyerItem, error)
+	GetFlyers(postalCode string) ([]storage.Flyer, error)
+	GetFlyerItems(flyerID int64) ([]storage.FlyerItem, error)
 }
-
-
