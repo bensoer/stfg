@@ -7,7 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"stfg/internal/reconciler/scrape"
+
+	"go.uber.org/zap"
 )
 
 type JSONFileStorage struct {
@@ -86,17 +87,22 @@ func (j *JSONFileStorage) retailGroupsIndexFile() string {
 	return RetailGroupIndexFileName
 }
 
-func (j *JSONFileStorage) HasRetailGroup(retailGroup scrape.RetailGroup) bool {
-	rtg, err := j.GetRetailGroup(retailGroup.ID)
-	if err != nil || (err == nil && rtg == nil) {
+func (j *JSONFileStorage) HasRetailGroup(flyer Flyer) bool {
+	rtg, err := j.GetRetailGroup(flyer.ID)
+	if err != nil {
+		if errors.Is(err, RetailGroupNotFound) {
+			return false
+		}
+		// Log the I/O error but treat as not-found for simplicity
+		zap.S().Errorf("Error checking for retail group %d: %v", flyer.ID, err)
 		return false
 	}
-	return true
+	return rtg != nil
 }
 
-func (j *JSONFileStorage) HasRetailGroupItem(retailGroupItem scrape.RetailGroupItem) (bool, error) {
+func (j *JSONFileStorage) HasRetailGroupItem(item FlyerItem) (bool, error) {
 
-	rtgis, err := j.GetRetailGroupItems(retailGroupItem.ID)
+	items, err := j.GetRetailGroupItems(item.ID)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// This means the file did not exist, so we can say it does not have a retail group item entry
@@ -105,8 +111,8 @@ func (j *JSONFileStorage) HasRetailGroupItem(retailGroupItem scrape.RetailGroupI
 		return false, err
 	}
 
-	for _, rtgi := range rtgis {
-		if rtgi.ID == retailGroupItem.ID {
+	for _, existing := range items {
+		if existing.ID == item.ID {
 			return true, nil
 		}
 	}
@@ -114,117 +120,117 @@ func (j *JSONFileStorage) HasRetailGroupItem(retailGroupItem scrape.RetailGroupI
 	return false, nil
 }
 
-func (j *JSONFileStorage) AddRetailGroup(retailGroup scrape.RetailGroup) error {
+func (j *JSONFileStorage) AddRetailGroup(flyer Flyer) error {
 
-	var rtgs []scrape.RetailGroup
-	err := j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+	var flyers []Flyer
+	err := j.loadJSON(j.retailGroupsIndexFile(), &flyers)
 	if err != nil {
 		return err
 	}
 
 	// Remove any flyer with the same ID
-	for i, f := range rtgs {
-		if f.ID == retailGroup.ID {
-			rtgs = append(rtgs[:i], rtgs[i+1:]...)
+	for i, f := range flyers {
+		if f.ID == flyer.ID {
+			flyers = append(flyers[:i], flyers[i+1:]...)
 			break
 		}
 	}
 
-	return j.saveJSON(j.retailGroupsIndexFile(), append(rtgs, retailGroup))
+	return j.saveJSON(j.retailGroupsIndexFile(), append(flyers, flyer))
 }
 
-func (j *JSONFileStorage) AddRetailGroupItem(retailGroupItem scrape.RetailGroupItem) error {
-	rtgis, err := j.GetRetailGroupItems(retailGroupItem.RetailGroupId)
+func (j *JSONFileStorage) AddRetailGroupItem(item FlyerItem) error {
+	items, err := j.GetRetailGroupItems(item.FlyerID)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return j.saveJSON(j.retailGroupFileName(retailGroupItem.RetailGroupId), append(rtgis, retailGroupItem))
+	return j.saveJSON(j.retailGroupFileName(item.FlyerID), append(items, item))
 }
 
-func (j *JSONFileStorage) GetRetailGroup(retailGroupId int64) (*scrape.RetailGroup, error) {
-	var rtgs []scrape.RetailGroup
-	err := j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+func (j *JSONFileStorage) GetRetailGroup(flyerID int64) (*Flyer, error) {
+	var flyers []Flyer
+	err := j.loadJSON(j.retailGroupsIndexFile(), &flyers)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, rtg := range rtgs {
-		if rtg.ID == retailGroupId {
-			return &rtg, nil
+	for i, f := range flyers {
+		if f.ID == flyerID {
+			return &flyers[i], nil
 		}
 	}
 
 	return nil, RetailGroupNotFound
 }
 
-func (j *JSONFileStorage) RemoveRetailGroup(retailGroup scrape.RetailGroup) error {
+func (j *JSONFileStorage) RemoveRetailGroup(flyer Flyer) error {
 	// If the group doesn't exist, then case closed
-	if !j.HasRetailGroup(retailGroup) {
+	if !j.HasRetailGroup(flyer) {
 		return nil
 	}
 
-	// Assumes the retailgroup exists, so first need to get rid of any retail group items
-	rtgis, err := j.GetRetailGroupItems(retailGroup.ID)
+	// Assumes the flyer exists, so first need to get rid of any flyer items
+	items, err := j.GetRetailGroupItems(flyer.ID)
 	if err != nil {
 		return err
 	}
-	for _, rtgi := range rtgis {
-		j.RemoveRetailGroupItem(rtgi)
+	for _, item := range items {
+		j.RemoveRetailGroupItem(item)
 	}
 
-	// Now remove the retail group
-	var rtgs []scrape.RetailGroup
-	err = j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+	// Now remove the flyer
+	var flyers []Flyer
+	err = j.loadJSON(j.retailGroupsIndexFile(), &flyers)
 	if err != nil {
 		return err
 	}
 
-	var rtgsToKeep []scrape.RetailGroup
-	for _, rtg := range rtgs {
-		// Keep everything BUT the retailGroup passed in
-		if rtg.ID != retailGroup.ID {
-			rtgsToKeep = append(rtgsToKeep, rtg)
+	var flyersToKeep []Flyer
+	for _, f := range flyers {
+		// Keep everything BUT the flyer passed in
+		if f.ID != flyer.ID {
+			flyersToKeep = append(flyersToKeep, f)
 		}
 	}
 
-	return j.saveJSON(j.retailGroupsIndexFile(), rtgsToKeep)
+	return j.saveJSON(j.retailGroupsIndexFile(), flyersToKeep)
 
 }
 
-func (j *JSONFileStorage) RemoveRetailGroupItem(retailGroupItem scrape.RetailGroupItem) error {
-	rtgis, err := j.GetRetailGroupItems(retailGroupItem.RetailGroupId)
+func (j *JSONFileStorage) RemoveRetailGroupItem(item FlyerItem) error {
+	items, err := j.GetRetailGroupItems(item.FlyerID)
 	if err != nil {
 		return err
 	}
 
-	rtgisToKeep := []scrape.RetailGroupItem{}
-	for _, rtgi := range rtgis {
-		if rtgi.ID != retailGroupItem.ID {
-			rtgisToKeep = append(rtgisToKeep, rtgi)
+	itemsToKeep := []FlyerItem{}
+	for _, existing := range items {
+		if existing.ID != item.ID {
+			itemsToKeep = append(itemsToKeep, existing)
 		}
 	}
 
-	return j.saveJSON(j.retailGroupFileName(retailGroupItem.RetailGroupId), rtgisToKeep)
+	return j.saveJSON(j.retailGroupFileName(item.FlyerID), itemsToKeep)
 }
 
-func (j *JSONFileStorage) GetRetailGroupItems(retailGroupId int64) ([]scrape.RetailGroupItem, error) {
+func (j *JSONFileStorage) GetRetailGroupItems(flyerID int64) ([]FlyerItem, error) {
 
-	var rtgis []scrape.RetailGroupItem
-	err := j.loadJSON(j.retailGroupFileName(retailGroupId), &rtgis)
+	var items []FlyerItem
+	err := j.loadJSON(j.retailGroupFileName(flyerID), &items)
 	if err != nil {
 		return nil, err
 	}
-	return rtgis, nil
+	return items, nil
 
 }
 
-func (j *JSONFileStorage) GetAllRetailGroups() ([]scrape.RetailGroup, error) {
-	var rtgs []scrape.RetailGroup
-	err := j.loadJSON(j.retailGroupsIndexFile(), &rtgs)
+func (j *JSONFileStorage) GetAllRetailGroups() ([]Flyer, error) {
+	var flyers []Flyer
+	err := j.loadJSON(j.retailGroupsIndexFile(), &flyers)
 	if err != nil {
 		return nil, err
 	}
-	return rtgs, nil
+	return flyers, nil
 }
 
 func (j *JSONFileStorage) saveJSON(filename string, data any) error {
