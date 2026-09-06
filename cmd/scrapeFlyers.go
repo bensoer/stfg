@@ -4,12 +4,13 @@ Copyright © 2026 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"stfg/internal/flipp"
+	"stfg/internal/flyerfinder"
+	"stfg/internal/flyerfinder/flipp"
 	"stfg/internal/reconciler/scrape"
 	"stfg/internal/storage"
-	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -20,43 +21,30 @@ var scrapeFlyersCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Long:  ``,
 	Run: func(cmd *cobra.Command, args []string) {
-		today := time.Now()
 		postalCode := args[0]
 
-		zap.S().Info("Searching For Valid Deals For ", today.Format("2006-01-02"), " Near Postal Code: ", postalCode)
+		finder := flipp.NewFinder()
+		var f flyerfinder.FlyerFinder = finder
 
-		client := flipp.NewClient()
-		storage, err := storage.NewJSONFileStorage()
+		store, err := storage.NewJSONFileStorage()
 		if err != nil {
-			zap.S().Error("Failed To Setup Storage System")
-			zap.S().Error(err)
+			zap.S().Error("Failed To Setup Storage System", err)
 			return
 		}
 
-		validFlyers := []string{
-			"Superstore",
-			"Thrify Foods",
-			"Quality Foods",
-			"Buy-Low Foods",
-			"Country Grocer",
-			"No Frills",
-			"Pharmasave",
-			"Shoppers Drug Mart",
-			"Walmart",
-			"Nesters Market",
-			"Rexall",
+		whitelist := viper.GetStringSlice("fly_finder.whitelist")
+		if len(whitelist) == 0 {
+			zap.S().Warn("fly_finder.whitelist is empty; no flyers will match")
 		}
 
-		err = scrape.Reconcile(client, storage, scrape.ScrapeReconcilerOptions{
+		err = scrape.Reconcile(cmd.Context(), f, store, scrape.ScrapeReconcilerOptions{
 			PostalCode:           postalCode,
-			RetailGroupWhiteList: validFlyers,
+			RetailGroupWhiteList: whitelist,
 		})
 
 		if err != nil {
-			zap.S().Error("Error Scraping Flyers")
-			zap.S().Error(err)
+			zap.S().Error("Error Scraping Flyers", err)
 		}
-
 	},
 }
 

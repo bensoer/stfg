@@ -107,6 +107,20 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 	}
+
+	viper.SetDefault("fly_finder.whitelist", []string{
+		"Superstore",
+		"Thrifty Foods",
+		"Quality Foods",
+		"Buy-Low Foods",
+		"Country Grocer",
+		"No Frills",
+		"Pharmasave",
+		"Shoppers Drug Mart",
+		"Walmart",
+		"Nesters Market",
+		"Rexall",
+	})
 }
 
 func setUpLogger() (*zap.SugaredLogger, error) {
