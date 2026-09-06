@@ -16,26 +16,19 @@ type Client struct {
 	base *gentleman.Client
 }
 
-func NewFinder(opts ...FinderOption) *Client {
-	c := &Client{
-		base: gentleman.New(),
+// NewFinder returns a *Client backed by the given gentleman client.
+// If client is nil, a default gentleman client is created.
+func NewFinder(client *gentleman.Client) *Client {
+	if client == nil {
+		client = gentleman.New()
 	}
-	for _, opt := range opts {
-		opt(c)
-	}
-	return c
+	return &Client{base: client}
 }
 
-// FinderOption configures a Client.
-type FinderOption func(*Client)
-
-// WithBaseClient sets the underlying gentleman.Client (useful for testing with a mock).
-func WithBaseClient(b *gentleman.Client) FinderOption {
-	return func(c *Client) {
-		c.base = b
-	}
-}
-
+// Compile-time assertion that *Client satisfies the flyerfinder.FlyerFinder
+// interface. If *Client ever stops implementing FlyerFinder (e.g. because a
+// method signature changed), this line will produce a clear compile error
+// at this exact location.
 var _ flyerfinder.FlyerFinder = (*Client)(nil)
 
 func (c *Client) GetFlyers(postalCode string) ([]storage.Flyer, error) {

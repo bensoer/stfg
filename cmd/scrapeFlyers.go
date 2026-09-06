@@ -22,7 +22,7 @@ var scrapeFlyersCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		postalCode := args[0]
 
-		finder := flipp.NewFinder()
+		finder := flipp.NewFinder(nil)
 		var f flyerfinder.FlyerFinder = finder
 		store := getStore(cmd)
 

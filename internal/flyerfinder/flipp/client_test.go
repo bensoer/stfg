@@ -20,7 +20,7 @@ func ptrString(s string) *string {
 
 // TestNewFinder_ReturnsClient tests that NewFinder returns a *Client.
 func TestNewFinder_ReturnsClient(t *testing.T) {
-	c := NewFinder()
+	c := NewFinder(nil)
 	if c == nil {
 		t.Error("NewFinder() returned nil")
 	}
@@ -143,7 +143,7 @@ func TestFindFlyers_BuildsCanonicalFlyers(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := NewFinder(WithBaseClient(newTestClient(ts)))
+	c := NewFinder(newTestClient(ts))
 
 	flyers, err := c.FindFlyers("12345")
 	if err != nil {
@@ -249,7 +249,7 @@ func TestFindFlyers_FallsBackToAvailableDates(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := NewFinder(WithBaseClient(newTestClient(ts)))
+	c := NewFinder(newTestClient(ts))
 
 	flyers, err := c.FindFlyers("12345")
 	if err != nil {
@@ -361,7 +361,7 @@ func TestFindFlyers_SkipsFlyersWithNoDates(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := NewFinder(WithBaseClient(newTestClient(ts)))
+	c := NewFinder(newTestClient(ts))
 
 	flyers, err := c.FindFlyers("12345")
 	if err != nil {
@@ -430,7 +430,7 @@ func TestFindFlyerItems_BuildsCanonicalItems(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := NewFinder(WithBaseClient(newTestClient(ts)))
+	c := NewFinder(newTestClient(ts))
 
 	items, err := c.FindFlyerItems(5)
 	if err != nil {
@@ -510,7 +510,7 @@ func TestFindFlyerItems_NilVideoURL(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c := NewFinder(WithBaseClient(newTestClient(ts)))
+	c := NewFinder(newTestClient(ts))
 
 	items, err := c.FindFlyerItems(6)
 	if err != nil {
