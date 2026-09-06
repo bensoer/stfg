@@ -1,6 +1,7 @@
 package json
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -593,18 +594,18 @@ func TestRemoveFlyer_CascadesItems(t *testing.T) {
 
 	// Add items to the flyer
 	item1 := storage.FlyerItem{
-		ID:       1,
-		FlyerID:  100,
-		Name:     "Item 1",
-		Brand:    "Brand A",
-		Price:    "$1.00",
+		ID:      1,
+		FlyerID: 100,
+		Name:    "Item 1",
+		Brand:   "Brand A",
+		Price:   "$1.00",
 	}
 	item2 := storage.FlyerItem{
-		ID:       2,
-		FlyerID:  100,
-		Name:     "Item 2",
-		Brand:    "Brand B",
-		Price:    "$2.00",
+		ID:      2,
+		FlyerID: 100,
+		Name:    "Item 2",
+		Brand:   "Brand B",
+		Price:   "$2.00",
 	}
 	if err := fs.AddFlyerItem(ctx, item1); err != nil {
 		t.Fatalf("AddFlyerItem 1 failed: %v", err)
@@ -730,14 +731,14 @@ func TestAddFlyerItem_DuplicateIDReturnsErrDuplicate(t *testing.T) {
 	}
 
 	item1 := storage.FlyerItem{
-		ID:       5,
-		FlyerID:  300,
-		Name:     "Item 1",
+		ID:      5,
+		FlyerID: 300,
+		Name:    "Item 1",
 	}
 	item2 := storage.FlyerItem{
-		ID:       5, // same ID and FlyerID
-		FlyerID:  300,
-		Name:     "Item 2",
+		ID:      5, // same ID and FlyerID
+		FlyerID: 300,
+		Name:    "Item 2",
 	}
 
 	if err := fs.AddFlyerItem(ctx, item1); err != nil {
@@ -771,14 +772,14 @@ func TestRemoveFlyerItem_RoundTrip(t *testing.T) {
 
 	// Add two items
 	item1 := storage.FlyerItem{
-		ID:       10,
-		FlyerID:  400,
-		Name:     "First Item",
+		ID:      10,
+		FlyerID: 400,
+		Name:    "First Item",
 	}
 	item2 := storage.FlyerItem{
-		ID:       11,
-		FlyerID:  400,
-		Name:     "Second Item",
+		ID:      11,
+		FlyerID: 400,
+		Name:    "Second Item",
 	}
 	if err := fs.AddFlyerItem(ctx, item1); err != nil {
 		t.Fatalf("AddFlyerItem first failed: %v", err)
@@ -936,9 +937,9 @@ func TestHasFlyerItem_PresentAndAbsent(t *testing.T) {
 
 	// Add an item
 	item := storage.FlyerItem{
-		ID:       42,
-		FlyerID:  800,
-		Name:     "Present Item",
+		ID:      42,
+		FlyerID: 800,
+		Name:    "Present Item",
 	}
 	if err := fs.AddFlyerItem(ctx, item); err != nil {
 		t.Fatalf("AddFlyerItem failed: %v", err)
@@ -996,9 +997,9 @@ func TestPruneExpired_RemovesStaleAndKeepsCurrent(t *testing.T) {
 	// Add items to each flyer to test cascade
 	for _, f := range []storage.Flyer{expired, current, noExpiry} {
 		item := storage.FlyerItem{
-			ID:       1,
-			FlyerID:  f.ID,
-			Name:     "Test Item",
+			ID:      1,
+			FlyerID: f.ID,
+			Name:    "Test Item",
 		}
 		if err := fs.AddFlyerItem(ctx, item); err != nil {
 			t.Fatalf("AddFlyerItem for flyer %d failed: %v", f.ID, err)
@@ -1117,6 +1118,13 @@ func TestConcurrent_AddGrocery_NoTornWrites(t *testing.T) {
 	fs, ctx := newTestStorage(t)
 
 	const numGoroutines = 50
+	// Pre-compute embeddings so mustEmbed (which can call t.Fatalf) is never
+	// invoked from a non-test goroutine.
+	embeddings := make([][]float32, numGoroutines)
+	for i := range embeddings {
+		embeddings[i] = mustEmbed(t, 3)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
@@ -1131,7 +1139,7 @@ func TestConcurrent_AddGrocery_NoTornWrites(t *testing.T) {
 			name := fmt.Sprintf("item_%03d", id)
 			item := storage.GroceryItem{
 				Name:      name,
-				Embedding: mustEmbed(t, 3),
+				Embedding: embeddings[id],
 			}
 			mu.Lock()
 			addedNames[name] = true
@@ -1248,6 +1256,169 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 	if err := fs.Close(); err != nil {
 		t.Fatalf("Close() second call failed: %v", err)
+	}
+}
+
+// Concurrency: adding the same grocery name from many goroutines must yield
+// exactly one success and one ErrDuplicate per loser, with no torn writes.
+func TestConcurrent_AddSameGrocery_SingleSuccess(t *testing.T) {
+	fs, ctx := newTestStorage(t)
+
+	const numGoroutines = 20
+	embed := mustEmbed(t, 3)
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	var mu sync.Mutex
+	successes := 0
+	dupErrors := 0
+	otherErrors := 0
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			err := fs.AddGrocery(ctx, storage.GroceryItem{Name: "milk", Embedding: embed})
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				successes++
+			} else if errors.Is(err, storage.ErrDuplicate) {
+				dupErrors++
+			} else {
+				otherErrors++
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	if successes != 1 {
+		t.Errorf("expected exactly 1 success, got %d", successes)
+	}
+	if dupErrors != numGoroutines-1 {
+		t.Errorf("expected %d ErrDuplicate errors, got %d", numGoroutines-1, dupErrors)
+	}
+	if otherErrors != 0 {
+		t.Errorf("expected 0 other errors, got %d", otherErrors)
+	}
+
+	groceries, err := fs.ListGroceries(ctx)
+	if err != nil {
+		t.Fatalf("ListGroceries failed: %v", err)
+	}
+	if len(groceries) != 1 {
+		t.Errorf("expected 1 stored grocery, got %d", len(groceries))
+	}
+}
+
+// Legacy camelCase flyers_index.json (the old RetailGroup on-disk schema) must be
+// normalized to the canonical snake_case storage.Flyer form during Migrate.
+func TestMigrate_LegacyCamelCaseFlyersIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+
+	legacy := []byte(`[{"id":1,"validFrom":"2024-01-01","validTo":"2024-01-31","name":"Test Flyer","merchant":"Test Merchant","aux":{"foo":"bar"},"location":[{"id":1,"address":"123 Main St","city":"Anytown","province":"ON","postalCode":"A1A 1A1"}]}]`)
+	if err := os.WriteFile(filepath.Join(tmpDir, flyersIndex), legacy, 0o600); err != nil {
+		t.Fatalf("failed to write legacy flyers_index: %v", err)
+	}
+
+	fs, err := NewJSONAt(ctx, tmpDir)
+	if err != nil {
+		t.Fatalf("NewJSONAt failed: %v", err)
+	}
+	defer fs.Close()
+
+	rewritten, err := os.ReadFile(filepath.Join(tmpDir, flyersIndex))
+	if err != nil {
+		t.Fatalf("failed to read migrated flyers_index: %v", err)
+	}
+	if bytes.Contains(rewritten, []byte(`"validFrom"`)) || bytes.Contains(rewritten, []byte(`"location"`)) {
+		t.Errorf("flyers_index.json still contains legacy keys: %s", rewritten)
+	}
+
+	flyers, err := fs.ListFlyers(ctx)
+	if err != nil {
+		t.Fatalf("ListFlyers failed: %v", err)
+	}
+	if len(flyers) != 1 {
+		t.Fatalf("expected 1 flyer after migration, got %d", len(flyers))
+	}
+	f := flyers[0]
+	if !f.ValidFrom.Equal(mustTime(t, "2024-01-01T00:00:00Z")) {
+		t.Errorf("ValidFrom = %v, want 2024-01-01T00:00:00Z", f.ValidFrom)
+	}
+	if !f.ValidTo.Equal(mustTime(t, "2024-01-31T00:00:00Z")) {
+		t.Errorf("ValidTo = %v, want 2024-01-31T00:00:00Z", f.ValidTo)
+	}
+	if f.Name != "Test Flyer" {
+		t.Errorf("Name = %q, want %q", f.Name, "Test Flyer")
+	}
+	if f.Merchant != "Test Merchant" {
+		t.Errorf("Merchant = %q, want %q", f.Merchant, "Test Merchant")
+	}
+	if len(f.Stores) != 1 {
+		t.Fatalf("expected 1 store after migration, got %d", len(f.Stores))
+	}
+	if f.Stores[0].ID != 1 {
+		t.Errorf("Store.ID = %d, want 1", f.Stores[0].ID)
+	}
+	if f.Stores[0].PostalCode != "A1A 1A1" {
+		t.Errorf("Store.PostalCode = %q, want %q", f.Stores[0].PostalCode, "A1A 1A1")
+	}
+
+	// Idempotent: a second Migrate must be a no-op and not error.
+	if err := fs.Migrate(ctx); err != nil {
+		t.Fatalf("second Migrate failed: %v", err)
+	}
+	flyers2, err := fs.ListFlyers(ctx)
+	if err != nil {
+		t.Fatalf("ListFlyers after re-migrate failed: %v", err)
+	}
+	if len(flyers2) != 1 {
+		t.Errorf("expected 1 flyer after re-migrate, got %d", len(flyers2))
+	}
+}
+
+// Legacy groceries.json written as a bare []string (old db.SaveGroceries) must
+// still load as GroceryItems without embeddings, and AddGrocery must keep working.
+func TestLoadGroceries_LegacyStringArray(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+
+	legacy := []byte(`["milk","bread"]`)
+	if err := os.WriteFile(filepath.Join(tmpDir, groceriesFile), legacy, 0o600); err != nil {
+		t.Fatalf("failed to write legacy groceries.json: %v", err)
+	}
+
+	fs, err := NewJSONAt(ctx, tmpDir)
+	if err != nil {
+		t.Fatalf("NewJSONAt failed: %v", err)
+	}
+	defer fs.Close()
+
+	groceries, err := fs.ListGroceries(ctx)
+	if err != nil {
+		t.Fatalf("ListGroceries failed: %v", err)
+	}
+	if len(groceries) != 2 {
+		t.Fatalf("expected 2 groceries from legacy array, got %d", len(groceries))
+	}
+	if groceries[0].Name != "milk" || groceries[1].Name != "bread" {
+		t.Errorf("grocery names = %q, %q; want milk, bread", groceries[0].Name, groceries[1].Name)
+	}
+
+	// AddGrocery must still work for a brand-new item; it rewrites the index in
+	// canonical form, after which the legacy schema is gone for this file.
+	if err := fs.AddGrocery(ctx, storage.GroceryItem{Name: "eggs", Embedding: mustEmbed(t, 3)}); err != nil {
+		t.Fatalf("AddGrocery eggs failed: %v", err)
+	}
+	groceries, err = fs.ListGroceries(ctx)
+	if err != nil {
+		t.Fatalf("ListGroceries after add failed: %v", err)
+	}
+	if len(groceries) != 3 {
+		t.Errorf("expected 3 groceries after adding eggs, got %d", len(groceries))
 	}
 }
 
