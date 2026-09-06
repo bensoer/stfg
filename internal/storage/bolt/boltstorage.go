@@ -94,7 +94,10 @@ func (s *BoltStorage) Close() error {
 	s.once.Do(func() {
 		if s.db != nil {
 			s.closeErr = s.db.Close()
-			s.db = nil
+			// Intentionally retain the db handle after Close: bbolt methods
+			// (View/Update/Begin) return bbolt.ErrDatabaseNotOpen (non-panicking)
+			// for subsequent calls. Nil-ing the handle here would turn those
+			// into nil-dereference panics.
 		}
 	})
 	return s.closeErr
@@ -137,6 +140,9 @@ func (s *BoltStorage) Migrate(ctx context.Context) error {
 
 // AddGrocery inserts a grocery item. Returns ErrDuplicate if name already exists (case-insensitive).
 func (s *BoltStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) error {
+	if strings.TrimSpace(item.Name) == "" {
+		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	key := strings.ToLower(item.Name)
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGroceries))
@@ -154,6 +160,9 @@ func (s *BoltStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) 
 
 // RemoveGrocery removes a grocery item by name (case-insensitive).
 func (s *BoltStorage) RemoveGrocery(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	key := strings.ToLower(name)
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte(bucketGroceries))
@@ -184,6 +193,9 @@ func (s *BoltStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem,
 
 // HasGrocery returns true if a grocery with the given name exists (case-insensitive).
 func (s *BoltStorage) HasGrocery(ctx context.Context, name string) (bool, error) {
+	if strings.TrimSpace(name) == "" {
+		return false, fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	key := strings.ToLower(name)
 	var found bool
 	err := s.db.View(func(tx *bbolt.Tx) error {

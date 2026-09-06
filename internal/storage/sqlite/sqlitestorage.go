@@ -33,7 +33,7 @@ const defaultSchemaVersion = 1
 // across repeated opens.
 var createTableStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-	`CREATE TABLE IF NOT EXISTS groceries (name TEXT PRIMARY KEY COLLATE NOCASE, embedding BLOB NOT NULL);`,
+	`CREATE TABLE IF NOT EXISTS groceries (name TEXT PRIMARY KEY COLLATE NOCASE, display_name TEXT NOT NULL, embedding BLOB NOT NULL);`,
 	`CREATE TABLE IF NOT EXISTS flyers (id INTEGER PRIMARY KEY, valid_from TEXT NOT NULL, valid_to TEXT, name TEXT NOT NULL, merchant TEXT NOT NULL, stores TEXT NOT NULL DEFAULT '[]');`,
 	`CREATE TABLE IF NOT EXISTS flyer_items (flyer_id INTEGER NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER, PRIMARY KEY (flyer_id, id), FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
 	`CREATE INDEX IF NOT EXISTS idx_flyer_items_flyer_id ON flyer_items(flyer_id);`,
@@ -129,7 +129,10 @@ func (s *SQLiteStorage) Close() error {
 	s.once.Do(func() {
 		if s.db != nil {
 			s.closeErr = s.db.Close()
-			s.db = nil
+			// Intentionally retain the db handle after Close: sql.DB methods
+			// return "sql: database is closed" errors (non-panicking) for
+			// subsequent calls. Nil-ing the handle here would turn those into
+			// nil-dereference panics.
 		}
 	})
 	return s.closeErr
@@ -169,9 +172,12 @@ func (s *SQLiteStorage) Migrate(ctx context.Context) error {
 // --- Embedding helpers ---
 
 // embeddingToBytes serialises a []float32 into a BLOB of little-endian
-// uint32 values, one per element. An empty embedding becomes an empty (but
-// non-nil) byte slice so it stores as an empty BLOB rather than NULL, keeping
-// the NOT NULL column constraint satisfiable.
+// uint32 values, one per element. An empty (or nil) embedding becomes an empty
+// (but non-nil) byte slice so it stores as an empty BLOB rather than NULL,
+// keeping the NOT NULL column constraint satisfiable. The round-trip is
+// intentionally asymmetric: bytesToEmbedding returns a nil []float32 when it
+// encounters an empty BLOB, so an empty stored embedding reads back as nil
+// rather than a non-nil empty slice.
 func embeddingToBytes(embedding []float32) []byte {
 	buf := make([]byte, len(embedding)*4)
 	for i, f := range embedding {
@@ -226,9 +232,12 @@ func unmarshalStores(data string) ([]storage.Store, error) {
 // --- Groceries ---
 
 func (s *SQLiteStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) error {
+	if strings.TrimSpace(item.Name) == "" {
+		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO groceries (name, embedding) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
-		item.Name, embeddingToBytes(item.Embedding))
+		"INSERT INTO groceries (name, display_name, embedding) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING",
+		strings.ToLower(item.Name), item.Name, embeddingToBytes(item.Embedding))
 	if err != nil {
 		return fmt.Errorf("sqlite: insert grocery: %w", err)
 	}
@@ -243,8 +252,11 @@ func (s *SQLiteStorage) AddGrocery(ctx context.Context, item storage.GroceryItem
 }
 
 func (s *SQLiteStorage) RemoveGrocery(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	res, err := s.db.ExecContext(ctx,
-		"DELETE FROM groceries WHERE name = ? COLLATE NOCASE", name)
+		"DELETE FROM groceries WHERE name = ?", strings.ToLower(name))
 	if err != nil {
 		return fmt.Errorf("sqlite: remove grocery: %w", err)
 	}
@@ -259,7 +271,7 @@ func (s *SQLiteStorage) RemoveGrocery(ctx context.Context, name string) error {
 }
 
 func (s *SQLiteStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name, embedding FROM groceries ORDER BY name")
+	rows, err := s.db.QueryContext(ctx, "SELECT display_name, embedding FROM groceries ORDER BY name")
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list groceries: %w", err)
 	}
@@ -288,9 +300,12 @@ func (s *SQLiteStorage) ListGroceries(ctx context.Context) ([]storage.GroceryIte
 }
 
 func (s *SQLiteStorage) HasGrocery(ctx context.Context, name string) (bool, error) {
+	if strings.TrimSpace(name) == "" {
+		return false, fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM groceries WHERE name = ? COLLATE NOCASE)", name).
+		"SELECT EXISTS(SELECT 1 FROM groceries WHERE name = ?)", strings.ToLower(name)).
 		Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("sqlite: has grocery: %w", err)
