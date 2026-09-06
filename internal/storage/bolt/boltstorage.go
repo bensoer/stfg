@@ -182,7 +182,7 @@ func (s *BoltStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem,
 		return b.ForEach(func(k, v []byte) error {
 			var item storage.GroceryItem
 			if err := json.Unmarshal(v, &item); err != nil {
-				return err
+				return fmt.Errorf("bolt: list groceries: %w", err)
 			}
 			out = append(out, item)
 			return nil
@@ -227,7 +227,7 @@ func (s *BoltStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
 		}
 		data, err := json.Marshal(flyerData)
 		if err != nil {
-			return fmt.Errorf("marshal flyer: %w", err)
+			return fmt.Errorf("bolt: marshal flyer: %w", err)
 		}
 		if err := flyersB.Put(idBytes, data); err != nil {
 			return err
@@ -236,7 +236,7 @@ func (s *BoltStorage) AddFlyer(ctx context.Context, flyer storage.Flyer) error {
 		storesB := tx.Bucket([]byte(bucketStores))
 		storesJSON, err := json.Marshal(flyer.Stores)
 		if err != nil {
-			return fmt.Errorf("marshal stores: %w", err)
+			return fmt.Errorf("bolt: marshal stores: %w", err)
 		}
 		return storesB.Put(idBytes, storesJSON)
 	})
@@ -282,7 +282,7 @@ func (s *BoltStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, e
 		}
 		var f storage.Flyer
 		if err := json.Unmarshal(data, &f); err != nil {
-			return err
+			return fmt.Errorf("bolt: get flyer: %w", err)
 		}
 		// Load stores
 		storesB := tx.Bucket([]byte(bucketStores))
@@ -290,7 +290,7 @@ func (s *BoltStorage) GetFlyer(ctx context.Context, id int64) (*storage.Flyer, e
 		if storesData != nil {
 			var stores []storage.Store
 			if err := json.Unmarshal(storesData, &stores); err != nil {
-				return err
+				return fmt.Errorf("bolt: get flyer: %w", err)
 			}
 			f.Stores = stores
 		}
@@ -309,14 +309,14 @@ func (s *BoltStorage) ListFlyers(ctx context.Context) ([]storage.Flyer, error) {
 		return flyersB.ForEach(func(k, v []byte) error {
 			var f storage.Flyer
 			if err := json.Unmarshal(v, &f); err != nil {
-				return err
+				return fmt.Errorf("bolt: list flyers: %w", err)
 			}
 			// Load stores
 			storesData := storesB.Get(k)
 			if storesData != nil {
 				var stores []storage.Store
 				if err := json.Unmarshal(storesData, &stores); err != nil {
-					return err
+					return fmt.Errorf("bolt: list flyers: %w", err)
 				}
 				f.Stores = stores
 			}
@@ -365,7 +365,7 @@ func (s *BoltStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) 
 		}
 		data, err := json.Marshal(item)
 		if err != nil {
-			return fmt.Errorf("marshal flyer item: %w", err)
+			return fmt.Errorf("bolt: marshal flyer item: %w", err)
 		}
 		return flyerB.Put(itemIDBytes, data)
 	})
@@ -405,7 +405,7 @@ func (s *BoltStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]stor
 		return flyerB.ForEach(func(k, v []byte) error {
 			var item storage.FlyerItem
 			if err := json.Unmarshal(v, &item); err != nil {
-				return err
+				return fmt.Errorf("bolt: list flyer items: %w", err)
 			}
 			out = append(out, item)
 			return nil
@@ -444,7 +444,7 @@ func (s *BoltStorage) PruneExpired(ctx context.Context, now time.Time) error {
 		err := flyersB.ForEach(func(k, v []byte) error {
 			var f storage.Flyer
 			if err := json.Unmarshal(v, &f); err != nil {
-				return err
+				return fmt.Errorf("bolt: prune expired: %w", err)
 			}
 			if !f.ValidTo.IsZero() && f.ValidTo.Before(now) {
 				// Copy key to avoid reference issues

@@ -276,6 +276,9 @@ func (f *FileStorage) loadGroceries(path string) ([]storage.GroceryItem, error) 
 }
 
 func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) error {
+	if strings.TrimSpace(item.Name) == "" {
+		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	path := f.groceriesPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -294,6 +297,9 @@ func (f *FileStorage) AddGrocery(ctx context.Context, item storage.GroceryItem) 
 }
 
 func (f *FileStorage) RemoveGrocery(ctx context.Context, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	path := f.groceriesPath()
 	mu := f.lockPath(path)
 	defer f.unlockPath(mu)
@@ -325,6 +331,9 @@ func (f *FileStorage) ListGroceries(ctx context.Context) ([]storage.GroceryItem,
 }
 
 func (f *FileStorage) HasGrocery(ctx context.Context, name string) (bool, error) {
+	if strings.TrimSpace(name) == "" {
+		return false, fmt.Errorf("%w: empty grocery name", storage.ErrInvalidArgument)
+	}
 	groceries, err := f.ListGroceries(ctx)
 	if err != nil {
 		return false, err

@@ -33,7 +33,7 @@ const defaultSchemaVersion = 1
 // across repeated opens.
 var createTableStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-	`CREATE TABLE IF NOT EXISTS groceries (name TEXT PRIMARY KEY COLLATE NOCASE, display_name TEXT NOT NULL, embedding BLOB NOT NULL);`,
+	`CREATE TABLE IF NOT EXISTS groceries (name TEXT PRIMARY KEY, display_name TEXT NOT NULL, embedding BLOB NOT NULL);`,
 	`CREATE TABLE IF NOT EXISTS flyers (id INTEGER PRIMARY KEY, valid_from TEXT NOT NULL, valid_to TEXT, name TEXT NOT NULL, merchant TEXT NOT NULL, stores TEXT NOT NULL DEFAULT '[]');`,
 	`CREATE TABLE IF NOT EXISTS flyer_items (flyer_id INTEGER NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER, PRIMARY KEY (flyer_id, id), FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
 	`CREATE INDEX IF NOT EXISTS idx_flyer_items_flyer_id ON flyer_items(flyer_id);`,
@@ -154,6 +154,49 @@ func (s *SQLiteStorage) Migrate(ctx context.Context) error {
 		}
 	}
 
+	// Upgrade legacy DBs created at commit 2803a49 whose groceries table lacks
+	// the display_name column. CREATE TABLE IF NOT EXISTS is a no-op on an
+	// existing table, so we inspect PRAGMA table_info and ALTER TABLE if the
+	// column is missing. Fresh databases already have it from the DDL above.
+	columns, err := tx.QueryContext(ctx, "PRAGMA table_info(groceries)")
+	if err != nil {
+		return fmt.Errorf("sqlite: query groceries columns: %w", err)
+	}
+	defer columns.Close()
+	var hasDisplayName bool
+	for columns.Next() {
+		var (
+			cid       int
+			colName   string
+			colType   string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := columns.Scan(&cid, &colName, &colType, &notnull, &dfltValue, &pk); err != nil {
+			return fmt.Errorf("sqlite: scan column info: %w", err)
+		}
+		if colName == "display_name" {
+			hasDisplayName = true
+		}
+	}
+	if err := columns.Err(); err != nil {
+		return fmt.Errorf("sqlite: iterate groceries columns: %w", err)
+	}
+	if !hasDisplayName {
+		if _, err := tx.ExecContext(ctx, "ALTER TABLE groceries ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("sqlite: add display_name column: %w", err)
+		}
+		// Backfill display_name from the legacy name column for rows that predate
+		// this migration (they were written before display_name existed). Fresh
+		// databases already carry the correct value from CREATE TABLE, and
+		// this UPDATE is a no-op for rows whose display_name is non-empty, so it
+		// is safe to run repeatedly.
+		if _, err := tx.ExecContext(ctx, "UPDATE groceries SET display_name = name WHERE display_name = ''"); err != nil {
+			return fmt.Errorf("sqlite: backfill display_name: %w", err)
+		}
+	}
+
 	// Check whether a schema version has already been recorded.
 	var version sql.NullInt64
 	if err := tx.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {
@@ -186,7 +229,10 @@ func embeddingToBytes(embedding []float32) []byte {
 	return buf
 }
 
-// bytesToEmbedding deserialises a BLOB back into a []float32.
+// bytesToEmbedding deserialises a BLOB back into a []float32. It returns a nil
+// []float32 (with a nil error) when the BLOB is empty, matching the asymmetry
+// documented on embeddingToBytes — an empty stored embedding reads back as nil
+// rather than a non-nil empty slice.
 func bytesToEmbedding(buf []byte) ([]float32, error) {
 	if len(buf) == 0 {
 		return nil, nil
