@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	openai "github.com/openai/openai-go/v3"
