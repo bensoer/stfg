@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
-	"fmt"
+	"net/http"
 	"time"
 
 	openai "github.com/openai/openai-go/v3"
@@ -12,6 +12,7 @@ import (
 
 // OpenAIProvider implements the Provider interface using the official OpenAI Go SDK.
 type OpenAIProvider struct {
+	APIKey string
 	Client openai.Client
 }
 
@@ -21,6 +22,7 @@ func NewOpenAIProvider(apiKey string) (*OpenAIProvider, error) {
 		option.WithAPIKey(apiKey),
 	)
 	return &OpenAIProvider{
+		APIKey: apiKey,
 		Client: client,
 	}, nil
 }
