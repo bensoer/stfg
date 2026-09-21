@@ -34,6 +34,12 @@ make
 ```
 stfg/
 ├── main.go                 # Entry point → cmd.Execute()
+├── docs/                  # Living project documentation
+│   ├── ARCHITECTURE.md    # Code architecture: structure, diagrams, mermaidjs
+│   ├── DECISIONS.md       # Important decisions / deviations / memory notes
+│   ├── PROJECT_CONTEXT.md # Product vision & desired outcome (never edit)
+│   ├── investigations/    # Research / transcripts (never edit after written)
+│   └── plans/             # Archive of plan documents
 ├── cmd/                    # Cobra commands
 │   ├── root.go            # Root command, config, logging setup
 │   ├── groceries.go       # Parent command for grocery ops
@@ -178,6 +184,18 @@ stfg/
 - Check network access to HuggingFace
 - Model: `Qwen/Qwen3-Embedding-0.6B-GGUF` (Q8_0 quantization)
 - Stored in `models/Qwen3-Embedding-0.6B-Q8_0.gguf`
+
+---
+
+## Documentation Index (`docs/`)
+
+| File | Purpose |
+|---|---|
+| `ARCHITECTURE.md` | Code architecture: structure, diagrams, mermaidjs (ephemeral - may change) |
+| `DECISIONS.md` | Important decisions / deviations / non-intuitive choices for future context |
+| `PROJECT_CONTEXT.md` | Product vision & desired outcome (never edit - represents where we're heading) |
+| `docs/investigations/` | Research / transcripts (never edit after written) |
+| `docs/plans/` | Archive of plan documents (not always 100% code-sync)
 
 ---
 
