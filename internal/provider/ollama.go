@@ -67,3 +67,33 @@ func (op *OllamaProvider) Send(ctx context.Context, prompt string, model string)
 	}
 	return matches, nil
 }
+
+// Embed returns one float32 embedding for text from model.
+func (op *OllamaProvider) Embed(ctx context.Context, text string, model string) ([]float32, error) {
+	if text == "" {
+		return nil, &ValidationError{Provider: "ollama", Field: "text", Msg: "empty"}
+	}
+	if model == "" {
+		return nil, &ValidationError{Provider: "ollama", Field: "model", Msg: "empty"}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+
+	client, err := ollama.NewClient(
+		ollama.WithHost(op.Host),
+		ollama.WithHTTPClient(op.client),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Embed(ctx, &ollama.EmbedRequest{Model: model, Input: text})
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: %w", err)
+	}
+	if resp == nil || len(resp.Embeddings) != 1 {
+		return nil, &ModelResponseError{Provider: "ollama", Raw: fmt.Sprintf("expected exactly one embedding, got %d", len(resp.Embeddings))}
+	}
+	return toFloat32Vector("ollama", resp.Embeddings[0])
+}

@@ -1,6 +1,10 @@
 package provider
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+)
 
 func groceryFlyerMatchesSchema() map[string]any {
 	return map[string]any{
@@ -41,4 +45,21 @@ func decodeGroceryFlyerMatches(providerName, raw string) ([]GroceryFlyerMatch, e
 		matches = []GroceryFlyerMatch{}
 	}
 	return matches, nil
+}
+
+// toFloat32Vector narrows a float64 vector to float32. It rejects empty input
+// and any NaN or Inf value, returning a ModelResponseError so the caller can
+// distinguish bad payloads from transport failures.
+func toFloat32Vector(providerName string, in []float64) ([]float32, error) {
+	if len(in) == 0 {
+		return nil, &ModelResponseError{Provider: providerName, Raw: "empty embedding vector"}
+	}
+	out := make([]float32, len(in))
+	for i, v := range in {
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return nil, &ModelResponseError{Provider: providerName, Raw: fmt.Sprintf("non-finite embedding at index %d", i)}
+		}
+		out[i] = float32(v)
+	}
+	return out, nil
 }
