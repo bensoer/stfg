@@ -43,3 +43,9 @@ This document records important architectural decisions, deviations, and non-int
 **Decision:** Store grocery items with their generated embedding vector, and flyers with their items as separate collections.
 
 **Reason:** Separating flyers from grocery items allows for efficient querying of all items within a flyer when finding deals.
+
+## Structured Provider Matches
+
+**Decision:** `Provider.Send` returns `[]GroceryFlyerMatch` for every backend. The model is asked for one JSON object, `{"matches":[...]}`, not a bare array and not free text. OpenAI, Ollama, and OpenRouter all receive that same schema. Decoding lives next to the schema in the provider package so the three SDKs cannot drift.
+
+**Reason:** The only model call in the program has one response shape. A generic `Send[T]` was rejected. OpenAI strict structured outputs need a root object, so the wire format is an envelope even though callers receive the inner slice.
