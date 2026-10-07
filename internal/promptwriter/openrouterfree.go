@@ -1,6 +1,7 @@
 package promptwriter
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,21 +9,8 @@ import (
 
 	"stfg/internal"
 
-	"github.com/kaptinlin/jsonrepair"
 	"go.uber.org/zap"
 )
-
-// You are a helpful shopping assistant. Below is a store flyer and a list of groceries the user wants to buy.
-
-// Decide which items from the grocery list appear (or have a close match/equivalent) in the flyer. For each match, report the grocery item, the matching flyer item id, and the matching flyer item name if available.
-
-// Respond ONLY with a JSON array of objects, each with the keys "grocery_item", "flyer_item_id" and "flyer_item_name". If there are no matches, respond with an empty array. If a grocery does not have a match DO NOT create an entry with empty flyer_item_id and flyer_item_name values. Do not include it in the response instead
-
-type GroceryFlyerMatch struct {
-	GroceryItem   string `json:"grocery_item"`
-	FlyerItemId   int64  `json:"flyer_item_id"`
-	FlyerItemName string `json:"flyer_item_name"`
-}
 
 type OpenRouterFreePromptWriter struct {
 	providerPrompter ProviderPrompter
@@ -36,7 +24,7 @@ func NewOpenRouterFreePromptWriter(pp ProviderPrompter) *OpenRouterFreePromptWri
 	}
 }
 
-func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(flyerItems []storage.FlyerItem, groceryList []storage.GroceryItem) (map[string][]storage.FlyerItem, error) {
+func (o *OpenRouterFreePromptWriter) GetFlyerItemsOnGroceryList(ctx context.Context, flyerItems []storage.FlyerItem, groceryList []storage.GroceryItem) (map[string][]storage.FlyerItem, error) {
 
 	minifiedFlyerItems := []map[string]any{}
 	for _, flyerItem := range flyerItems {
@@ -71,13 +59,15 @@ Review the following flyer and grocery list. Find all items in the flyer that ma
 # Response Structure
 
 ALWAYS respond in with a JSON list of objects matching this spec:
-[
-  {
-    "grocery_item": string,
-	"flyer_item_id": number,
-	"flyer_item_name": string
-  }
-]
+{
+  "matches": [
+    {
+      "grocery_item": string,
+      "flyer_item_id": number,
+      "flyer_item_name": string
+    }
+  ]
+}
 
 ## Attributes Description:
 - "grocery_item" is the grocery item from the grocery list
@@ -101,31 +91,14 @@ ALWAYS respond in with a JSON list of objects matching this spec:
 
 RetryLoop:
 	for range 3 {
-		response, err := o.providerPrompter.Send(prompt, o.model)
+		gfms, err := o.providerPrompter.Send(ctx, prompt, o.model)
 		if err != nil {
 			// Something bizarre happened, we should abort right away
 			zap.S().Errorf("Error sending prompt: %v", err)
 			return nil, fmt.Errorf("error sending prompt: %w", err)
 		}
 
-		zap.S().Debugf("Raw Response >>>%s<<<\n", *response)
-
-		repairedJSON, err := jsonrepair.Repair(*response) // fix any bizarreness in the response
-		zap.S().Debugf("Raw Repaired JSON >>>%s<<<\n", repairedJSON)
-		if err != nil {
-			zap.S().Debugf("Repair Failed. Can't do anything with data: %v", err)
-			// Repairing was not possible, response was invalid. We should try again
-			continue
-		}
-
 		zap.S().Debug("Repairs were fine, on to checking if things match")
-
-		var gfms []GroceryFlyerMatch
-		err = json.Unmarshal([]byte(repairedJSON), &gfms)
-		if err != nil {
-			// Parsing the returned object was not possible. Response is invalid. We should try again
-			continue
-		}
 
 		// Next check that they all map
 
@@ -134,7 +107,7 @@ RetryLoop:
 
 			matchFound := false
 			for _, flyerItem := range flyerItems {
-				if flyerItem.ID == gfm.FlyerItemId &&
+				if flyerItem.ID == gfm.FlyerItemID &&
 					flyerItem.Name == gfm.FlyerItemName &&
 					internal.Contains(groceryNames, gfm.GroceryItem) {
 
@@ -157,7 +130,11 @@ RetryLoop:
 
 			if !matchFound {
 				// This means there is a response item that doesn't belong to anything! We got illogical mappings!
-				zap.S().Debugf("No Match For: FlyerItemName %s |  FlyerItemId %d | GroceryItem %s", gfm.FlyerItemName, gfm.FlyerItemId, gfm.GroceryItem)
+				// fix any bizarreness in the response
+				// Repairing was not possible, response was invalid. We should try again
+				// Parsing the returned object was not possible. Response is invalid. We should try again
+				zap.S().Debugf("No Match For: FlyerItemName %s |  FlyerItemId %d | GroceryItem %s", gfm.FlyerItemName, gfm.FlyerItemID, gfm.GroceryItem)
+				// fix any bizarreness in the response
 				continue RetryLoop
 			}
 

@@ -46,7 +46,11 @@ var FindDealsCmd = &cobra.Command{
 			apiKeyFlag, _ := cmd.Flags().GetString("api-key")
 			apiKey = apiKeyFlag
 		}
-		client := provider.NewClient(apiKey)
+		client, err := provider.NewOpenRouterProvider(apiKey)
+		if err != nil {
+			zap.S().Errorf("Error creating OpenRouter provider: %v", err)
+			return
+		}
 		promptWriter := promptwriter.NewOpenRouterFreePromptWriter(client)
 
 		zap.S().Infof("Searching for deals on %d grocery items across %d flyers...\n\n", len(groceries), len(flyers))
@@ -63,7 +67,7 @@ var FindDealsCmd = &cobra.Command{
 				continue
 			}
 
-			matches, err := promptWriter.GetFlyerItemsOnGroceryList(flyerItems, groceries)
+			matches, err := promptWriter.GetFlyerItemsOnGroceryList(cmd.Context(), flyerItems, groceries)
 			if err != nil {
 				zap.S().Warnf("Error processing flyer %d: %v", flyer.ID, err)
 				continue

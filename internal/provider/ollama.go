@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -25,14 +26,14 @@ func NewOllamaProvider(host string) (*OllamaProvider, error) {
 		host = "http://localhost:11434"
 	}
 	return &OllamaProvider{
-		Host: host,
+		Host:   host,
 		client: &http.Client{Timeout: 3 * time.Minute},
 	}, nil
 }
 
 // Send sends a prompt to the underlying model and returns the raw response as a string.
-func (op *OllamaProvider) Send(prompt string, model string) (*string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+func (op *OllamaProvider) Send(ctx context.Context, prompt string, model string) ([]GroceryFlyerMatch, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
 	client, err := ollama.NewClient(
@@ -51,6 +52,7 @@ func (op *OllamaProvider) Send(prompt string, model string) (*string, error) {
 				Content: prompt,
 			},
 		},
+		Format: groceryFlyerMatchesSchema(),
 	})
 	if err != nil {
 		return nil, err
@@ -59,6 +61,9 @@ func (op *OllamaProvider) Send(prompt string, model string) (*string, error) {
 		return nil, errors.New("nil response from ollama")
 	}
 
-	content := resp.Message.Content
-	return &content, nil
+	matches, err := decodeGroceryFlyerMatches("ollama", resp.Message.Content)
+	if err != nil {
+		return nil, fmt.Errorf("ollama decode matches: %w", err)
+	}
+	return matches, nil
 }
