@@ -4,12 +4,10 @@ go 1.26.5
 
 require (
 	github.com/OpenRouterTeam/go-sdk v0.5.18
-	github.com/kaptinlin/jsonrepair v0.4.8
 	github.com/liliang-cn/ollama-go v0.2.1
 	github.com/openai/openai-go/v3 v3.64.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/tcpipuk/llama-go v0.0.0-20260720163946-9cd5256084b0
 	go.etcd.io/bbolt v1.5.0
 	go.uber.org/zap v1.28.0
 	gopkg.in/h2non/gentleman.v2 v2.0.5
@@ -20,8 +18,8 @@ require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
-	github.com/go-json-experiment/json v0.0.0-20260601182631-00ed12fed2a6 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

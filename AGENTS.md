@@ -9,7 +9,7 @@
 - **Logging**: Zap (structured JSON + console)
 - **Config**: Viper (YAML, env vars, flags)
 - **Storage**: JSON files in OS cache dir
-- **ML**: llama.cpp via `tcpipuk/llama-go` for embeddings
+- **Embeddings**: Hosted LLM via `provider.Provider.Embed` (OpenRouter with `openai/text-embedding-3-small` for `add-grocery`)
 - **Scraping**: Flipp API integration
 
 ---
@@ -49,10 +49,7 @@ stfg/
 │   ├── scrapeFlyers.go    # Scrape flyers via Flipp API
 │   └── findDeals.go       # Match flyers to grocery list (semantic search)
 ├── internal/
-│   ├── models/            # Embedding model handling
-│   │   ├── client.go      # llama-go integration, CreateGroceryEmbedding()
-│   │   ├── resolver.go    # Download/resolve GGUF models from HF
-│   │   └── types.go       # Model constants (Qwen3-Embedding-0.6B)
+│   ├── embedding/         # GroceryEmbedder: provider-backed vector generation
 │   ├── storage/           # JSON file persistence
 │   │   ├── db.go          # Low-level JSON save/load + cache dir
 │   │   ├── jsonfilestorage.go  # High-level Grocery/Flyer CRUD
@@ -135,11 +132,11 @@ stfg/
 ### Adding a Grocery Item
 1. `addGrocery` command → `storage.NewJSONFileStorage()`
 2. Checks `groceries.json` for duplicates (case-insensitive)
-3. Calls `models.CreateGroceryEmbedding(item)`:
-   - Resolves/downloads `Qwen3-Embedding-0.6B-Q8_0.gguf` to `models/`
-   - Loads model with llama-go (GPU layers=-1, mmap, silent loading)
-   - Creates context (1024 tokens, embeddings enabled)
-   - Runs `ctx.GetEmbeddings(grocery)` → `[]float32`
+3. Calls `GroceryEmbedder.CreateGroceryEmbedding(item)`:
+   - Resolves `api_key` from viper, falling back to the `--api-key` / `-a` flag
+   - Constructs `provider.NewOpenRouterProvider(apiKey)`
+   - Wraps the provider in `embedding.NewGroceryEmbedder(client, "openai/text-embedding-3-small")`
+   - Calls `Provider.Embed(ctx, item, model)` → `[]float32`
 4. Saves `GroceryItem{Name, Embedding}` to `groceries.json`
 
 ### Scraping Flyers
@@ -163,9 +160,8 @@ stfg/
 | `github.com/spf13/cobra` | CLI framework |
 | `github.com/spf13/viper` | Config management |
 | `go.uber.org/zap` | Structured logging |
-| `github.com/tcpipuk/llama-go` | llama.cpp Go bindings |
-| `github.com/OpenRouterTeam/go-sdk` | LLM API (OpenRouter) |
-| `github.com/openai/openai-go/v3` | LLM API (OpenAI) |
+| `github.com/OpenRouterTeam/go-sdk` | LLM API (OpenRouter; used by `find-deals` and `add-grocery`) |
+| `github.com/openai/openai-go/v3` | LLM API (OpenAI; embeds `openai/text-embedding-3-small` via OpenRouter) |
 | `github.com/liliang-cn/ollama-go` | LLM API (Ollama) |
 | `github.com/h2non/gentleman` | HTTP client (Flipp API) |
 | `github.com/kaptinlin/jsonrepair` | JSON repair |
@@ -180,13 +176,11 @@ stfg/
 
 ### llama.cpp Logs Spamming Output
 - Makefile includes `-DLLAMA_DISABLE_LOGS=1` in CFLAGS/CXXFLAGS
-- `models/client.go` sets `LLAMA_LOG=none` at init
 - Use `--quiet` flag to also suppress stfg's own logs
 
-### Model Download Fails
-- Check network access to HuggingFace
-- Model: `Qwen/Qwen3-Embedding-0.6B-GGUF` (Q8_0 quantization)
-- Stored in `models/Qwen3-Embedding-0.6B-Q8_0.gguf`
+> Note: `tcpipuk/llama-go` is no longer imported by Go code. `make` still
+> builds llama.cpp because the Makefile is the documented build entrypoint;
+> the artifacts are unused by the current Go packages.
 
 ---
 
@@ -207,8 +201,7 @@ stfg/
 - **No tests yet** - add via `go test ./...`
 - **Logger**: `zap.S()` for sugar, configured in `root.go:PersistentPreRunE`
 - **Cache dir**: `internal.CacheDir()` (OS-specific: `~/.cache/stfg` on Linux)
-- **Embeddings**: 1024 context size (Qwen supports 32768 but trimmed for memory)
-- **Silent loading**: `llama.WithSilentLoading()` + `LLAMA_DISABLE_LOGS=1`
+- **Embeddings**: `GroceryEmbedder.CreateGroceryEmbedding` calls `Provider.Embed`; the model is fixed at `openai/text-embedding-3-small` for `add-grocery`. Vector length is whatever the model returns.
 
 ---
 
@@ -217,7 +210,7 @@ stfg/
 | Need | Location |
 |------|----------|
 | Add new CLI command | `cmd/newCommand.go` + register in `init()` |
-| Modify embedding model | `internal/models/types.go` |
+| Change the embedding model or provider used by `add-grocery` | `cmd/addGrocery.go` (model string) |
 | Change storage format | `internal/storage/jsonfilestorage.go` |
 | Add retailer to whitelist | `cmd/scrapeFlyers.go:validFlyers` |
 | Adjust llama.cpp build flags | `Makefile:15` (CFLAGS/CXXFLAGS) |
@@ -225,3 +218,4 @@ stfg/
 | Structured match types | `internal/provider/types.go` |
 | Match schema and decoder | `internal/provider/utils.go` |
 | Prompt writer type | `internal/promptwriter/prompt_writer.go` |
+| Grocery embedding entry point | `internal/embedding/grocery_embedder.go` |

@@ -55,3 +55,9 @@ This document records important architectural decisions, deviations, and non-int
 **Decision:** `PromptWriter` depends on `provider.Provider` directly. The model name is a constructor argument. `find-deals` passes `NewOpenRouterProvider` and `openrouter/free`. There is no local prompter interface and no OpenRouter-specific writer type.
 
 **Reason:** After `Send` returned `[]GroceryFlyerMatch`, the local interface duplicated `provider.Provider` and the writer hardcoded one model. Keeping provider choice at the command leaves OpenAI and Ollama unwired until a caller needs them, without a factory.
+
+## Provider-Backed Grocery Embeddings
+
+**Decision:** Grocery embeddings now come from `Provider.Embed`. The `internal/models` package — which loaded a local Qwen GGUF through llama.cpp — is gone. `add-grocery` constructs `NewOpenRouterProvider` from the `api_key` viper key (falling back to the `--api-key` / `-a` flag) and hardcodes the model `openai/text-embedding-3-small` on `NewGroceryEmbedder`. The model string lives in the command, not in `internal/embedding`.
+
+**Reason:** The llama.cpp path was the only Go call site for `tcpipuk/llama-go`. With `Provider.Embed` available on OpenAI, Ollama, and OpenRouter, embeddings can use the same plumbing as `find-deals` and the program no longer ships a GGUF loader in Go. Stored Qwen vectors are not migrated: a re-embedding run is required to compare against the new model. The `Makefile` still builds llama.cpp because `make` remains the documented build entrypoint, but that build is no longer consumed by this package.

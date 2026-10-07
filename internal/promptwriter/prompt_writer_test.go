@@ -34,6 +34,10 @@ func (f *fakeProvider) Send(_ context.Context, prompt string, model string) ([]p
 	return nil, errors.New("fakeProvider: no scripted response")
 }
 
+func (f *fakeProvider) Embed(_ context.Context, _ string, _ string) ([]float32, error) {
+	return nil, errors.New("embed not used")
+}
+
 func TestNewPromptWriter_RejectsNilProvider(t *testing.T) {
 	if _, err := NewPromptWriter(nil, "openrouter/free"); err == nil {
 		t.Fatal("expected error for nil provider, got nil")

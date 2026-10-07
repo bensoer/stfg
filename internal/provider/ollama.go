@@ -14,8 +14,11 @@ import (
 type OllamaProvider struct {
 	// Host is the Ollama server address (default: http://localhost:11434)
 	Host string
-	// HTTP client for making requests
-	client *http.Client
+	// httpClient carries the request timeout applied to every Ollama call.
+	httpClient *http.Client
+	// ollamaClient is the configured Ollama SDK client, built once in the
+	// constructor so Send and Embed do not allocate one per call.
+	ollamaClient *ollama.Client
 }
 
 // NewOllamaProvider creates a new Ollama provider instance.
@@ -25,9 +28,18 @@ func NewOllamaProvider(host string) (*OllamaProvider, error) {
 	if host == "" {
 		host = "http://localhost:11434"
 	}
+	httpClient := &http.Client{Timeout: 3 * time.Minute}
+	ollamaClient, err := ollama.NewClient(
+		ollama.WithHost(host),
+		ollama.WithHTTPClient(httpClient),
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &OllamaProvider{
-		Host:   host,
-		client: &http.Client{Timeout: 3 * time.Minute},
+		Host:         host,
+		httpClient:   httpClient,
+		ollamaClient: ollamaClient,
 	}, nil
 }
 
@@ -36,15 +48,7 @@ func (op *OllamaProvider) Send(ctx context.Context, prompt string, model string)
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
-	client, err := ollama.NewClient(
-		ollama.WithHost(op.Host),
-		ollama.WithHTTPClient(op.client),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Chat(ctx, &ollama.ChatRequest{
+	resp, err := op.ollamaClient.Chat(ctx, &ollama.ChatRequest{
 		Model: model,
 		Messages: []ollama.Message{
 			{
@@ -66,4 +70,26 @@ func (op *OllamaProvider) Send(ctx context.Context, prompt string, model string)
 		return nil, fmt.Errorf("ollama decode matches: %w", err)
 	}
 	return matches, nil
+}
+
+// Embed returns one float32 embedding for text from model.
+func (op *OllamaProvider) Embed(ctx context.Context, text string, model string) ([]float32, error) {
+	if text == "" {
+		return nil, &ValidationError{Provider: "ollama", Field: "text", Msg: "empty"}
+	}
+	if model == "" {
+		return nil, &ValidationError{Provider: "ollama", Field: "model", Msg: "empty"}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+
+	resp, err := op.ollamaClient.Embed(ctx, &ollama.EmbedRequest{Model: model, Input: text})
+	if err != nil {
+		return nil, fmt.Errorf("ollama embed: %w", err)
+	}
+	if resp == nil || len(resp.Embeddings) != 1 {
+		return nil, &ModelResponseError{Provider: "ollama", Raw: fmt.Sprintf("expected exactly one embedding, got %d", len(resp.Embeddings))}
+	}
+	return toFloat32Vector("ollama", resp.Embeddings[0])
 }
