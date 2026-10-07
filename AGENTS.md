@@ -221,4 +221,5 @@ stfg/
 | Add retailer to whitelist | `cmd/scrapeFlyers.go:validFlyers` |
 | Adjust llama.cpp build flags | `Makefile:15` (CFLAGS/CXXFLAGS) |
 | Config/logging setup | `cmd/root.go` |
-| Structured match type and schema | `internal/provider/types.go` |
+| Structured match types | `internal/provider/types.go` |
+| Match schema and decoder | `internal/provider/utils.go` |
