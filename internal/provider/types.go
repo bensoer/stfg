@@ -16,3 +16,15 @@ type GroceryFlyerMatch struct {
 type GroceryFlyerMatches struct {
 	Matches []GroceryFlyerMatch `json:"matches"`
 }
+
+type OllamaOptions struct {
+	Host string `json:"host,omitempty"` // Ollama server address (default: http://localhost:11434)
+}
+
+type OpenRouterOptions struct {
+	APIKey string `json:"api_key,omitempty"` // OpenRouter API key
+}
+
+type OpenAIOptions struct {
+	APIKey string `json:"api_key,omitempty"` // OpenAI API key
+}

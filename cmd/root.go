@@ -32,34 +32,55 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"stfg/internal/container"
+	"stfg/internal/provider"
 	"stfg/internal/storage"
+	"stfg/internal/storage/bolt"
 	"stfg/internal/storage/json"
+	"stfg/internal/storage/sqlite"
 )
-
-// storageCtxKey is the context key used to pass the storage.Storage
-// handle from the groceries command's PersistentPreRunE to subcommand Run handlers.
-type storageCtxKey struct{}
 
 // getStore retrieves the storage.Storage handle from the cobra command context.
 // The storage handle is set by the root command's PersistentPreRunE, so every
 // subcommand has access to it. If the handle is missing (should not happen in
 // normal operation) a fresh store is created as a fallback.
-func getStore(cmd *cobra.Command) storage.Storage {
-	store, ok := cmd.Context().Value(storageCtxKey{}).(storage.Storage)
-	if ok && store != nil {
-		return store
+func setupRegistry(ctx context.Context) *container.ContainerRegistry {
+	reg := container.NewContainerRegistry()
+
+	// --- Storage providers ---
+	reg.RegisterStorageProvider(ctx, "json", func(c context.Context, opts container.StorageProviderOptions) (storage.StorageProvider, error) {
+		return json.NewJSON(c, opts.JSONOptions)
+	})
+	reg.RegisterStorageProvider(ctx, "sqlite", func(c context.Context, opts container.StorageProviderOptions) (storage.StorageProvider, error) {
+		return sqlite.NewSQLite(c, opts.SQLiteOptions)
+	})
+	reg.RegisterStorageProvider(ctx, "bolt", func(c context.Context, opts container.StorageProviderOptions) (storage.StorageProvider, error) {
+		return bolt.NewBolt(c, opts.BoltOptions)
+	})
+
+	// --- Provider providers ---
+	reg.RegisterProviderProvider(ctx, "openrouter", func(c context.Context, opts container.ProviderProviderOptions) (provider.Provider, error) {
+		return provider.NewOpenRouterProvider(opts.OpenRouterOptions)
+	})
+	reg.RegisterProviderProvider(ctx, "ollama", func(c context.Context, opts container.ProviderProviderOptions) (provider.Provider, error) {
+		return provider.NewOllamaProvider(opts.OllamaOptions)
+	})
+	reg.RegisterProviderProvider(ctx, "openai", func(c context.Context, opts container.ProviderProviderOptions) (provider.Provider, error) {
+		return provider.NewOpenAIProvider(opts.OpenAIOptions)
+	})
+
+	return reg
+}
+
+// registryCtxKey is the context key for the container registry.
+type registryCtxKey struct{}
+
+func getContainer(cmd *cobra.Command) *container.ContainerRegistry {
+	reg, ok := cmd.Context().Value(registryCtxKey{}).(*container.ContainerRegistry)
+	if ok && reg != nil {
+		return reg
 	}
-	// Fallback: initialize a fresh store. This should only trigger if
-	// PersistentPreRunE failed silently or during testing.
-	store, err := json.NewJSON(cmd.Context())
-	if err != nil {
-		// Last resort — returning nil will cause a panic at the call site
-		// which is better than silently proceeding without storage.
-		return nil
-	}
-	ctx := context.WithValue(cmd.Context(), storageCtxKey{}, store)
-	cmd.SetContext(ctx)
-	return store
+	return nil
 }
 
 var cfgFile string
@@ -107,13 +128,11 @@ func init() {
 
 		zap.ReplaceGlobals(logger.Desugar())
 
-		// Initialize storage for every command. The handle is stored on
-		// the command context so subcommands can retrieve it via getStore().
-		store, err := json.NewJSON(cmd.Context())
-		if err != nil {
-			return err
-		}
-		ctx := context.WithValue(cmd.Context(), storageCtxKey{}, store)
+		// Build the container registry and register all loaders.
+		reg := setupRegistry(cmd.Context())
+		// Assign the registry to the command context so every subcommand can
+		// retrieve it via getRegistry(cmd).
+		ctx := context.WithValue(cmd.Context(), registryCtxKey{}, reg)
 		cmd.SetContext(ctx)
 
 		return nil

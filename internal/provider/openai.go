@@ -17,9 +17,9 @@ type OpenAIProvider struct {
 }
 
 // NewOpenAIProvider creates a new OpenAI provider instance.
-func NewOpenAIProvider(apiKey string) (*OpenAIProvider, error) {
+func NewOpenAIProvider(opts OpenAIOptions) (*OpenAIProvider, error) {
 	client := openai.NewClient(
-		option.WithAPIKey(apiKey),
+		option.WithAPIKey(opts.APIKey),
 	)
 	return &OpenAIProvider{
 		Client: client,

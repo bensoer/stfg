@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"stfg/internal/models"
 	"stfg/internal/storage"
 )
 

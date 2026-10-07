@@ -18,9 +18,9 @@ type OpenRouterProvider struct {
 }
 
 // NewOpenRouterProvider creates a new OpenRouter provider instance.
-func NewOpenRouterProvider(apiKey string) (*OpenRouterProvider, error) {
+func NewOpenRouterProvider(opts OpenRouterOptions) (*OpenRouterProvider, error) {
 	client := openrouter.New(
-		openrouter.WithSecurity(apiKey),
+		openrouter.WithSecurity(opts.APIKey),
 	)
 	return &OpenRouterProvider{
 		client: client,

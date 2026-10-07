@@ -53,7 +53,7 @@ func sliceEqualFloat32(a, b []float32) bool {
 func newTestStorage(t *testing.T) (*BoltStorage, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := NewBolt(ctx, Options{CacheDir: t.TempDir(), BoltFileName: "test.bolt"})
+	s, err := NewBolt(ctx, BoltOptions{CacheDir: t.TempDir(), BoltFileName: "test.bolt"})
 	if err != nil {
 		t.Fatalf("NewBolt failed: %v", err)
 	}
@@ -64,7 +64,7 @@ func newTestStorage(t *testing.T) (*BoltStorage, context.Context) {
 // TestStorageContract runs the cross-backend parity suite against bolt.
 func TestStorageContract(t *testing.T) {
 	parity.TestStorageContract(t, func(t *testing.T) storage.Storage {
-		s, err := NewBolt(context.Background(), Options{CacheDir: t.TempDir(), BoltFileName: "test.bolt"})
+		s, err := NewBolt(context.Background(), BoltOptions{CacheDir: t.TempDir(), BoltFileName: "test.bolt"})
 		if err != nil {
 			t.Fatalf("NewBolt: %v", err)
 		}
@@ -79,7 +79,7 @@ func TestNewBolt_CreatesDirAndFileWithOwnerOnlyPerms(t *testing.T) {
 	cacheDir := filepath.Join(t.TempDir(), "created-by-bolt")
 	ctx := context.Background()
 
-	fs, err := NewBolt(ctx, Options{CacheDir: cacheDir, BoltFileName: "test.bolt"})
+	fs, err := NewBolt(ctx, BoltOptions{CacheDir: cacheDir, BoltFileName: "test.bolt"})
 	if err != nil {
 		t.Fatalf("NewBolt failed: %v", err)
 	}

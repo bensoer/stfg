@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storage.Storage, options ScrapeReconcilerOptions) error {
+func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storage.StorageProvider, options ScrapeReconcilerOptions) error {
 	log := zap.S()
 
 	log.Info("Starting flyer reconciliation")

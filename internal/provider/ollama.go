@@ -21,12 +21,12 @@ type OllamaProvider struct {
 // NewOllamaProvider creates a new Ollama provider instance.
 // host: optional Ollama server address (e.g., "http://localhost:11434", "http://127.0.0.1:11435")
 // If host is empty, it defaults to http://localhost:11434
-func NewOllamaProvider(host string) (*OllamaProvider, error) {
-	if host == "" {
-		host = "http://localhost:11434"
+func NewOllamaProvider(opts OllamaOptions) (*OllamaProvider, error) {
+	if opts.Host == "" {
+		opts.Host = "http://localhost:11434"
 	}
 	return &OllamaProvider{
-		Host:   host,
+		Host:   opts.Host,
 		client: &http.Client{Timeout: 3 * time.Minute},
 	}, nil
 }
