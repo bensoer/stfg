@@ -48,25 +48,37 @@ func setupRegistry(ctx context.Context) *container.ContainerRegistry {
 	reg := container.NewContainerRegistry()
 
 	// --- Storage providers ---
-	reg.RegisterStorageProvider(ctx, "json", func(c context.Context, opts container.StorageProviderOptions) (storage.StorageProvider, error) {
-		return json.NewJSON(c, opts.JSONOptions)
+	reg.RegisterStorageProvider(ctx, "json", func(c context.Context) (storage.StorageProvider, error) {
+		return json.NewJSON(c, json.JSONOptions{})
 	})
-	reg.RegisterStorageProvider(ctx, "sqlite", func(c context.Context, opts container.StorageProviderOptions) (storage.StorageProvider, error) {
-		return sqlite.NewSQLite(c, opts.SQLiteOptions)
+	reg.RegisterStorageProvider(ctx, "sqlite", func(c context.Context) (storage.StorageProvider, error) {
+		return sqlite.NewSQLite(c, sqlite.SQLiteOptions{
+			CacheDir:       viper.GetString("storage.sqlite.cache_dir"),
+			SQLiteFileName: viper.GetString("storage.sqlite.sqlite_file_name"),
+		})
 	})
-	reg.RegisterStorageProvider(ctx, "bolt", func(c context.Context, opts container.StorageProviderOptions) (storage.StorageProvider, error) {
-		return bolt.NewBolt(c, opts.BoltOptions)
+	reg.RegisterStorageProvider(ctx, "bolt", func(c context.Context) (storage.StorageProvider, error) {
+		return bolt.NewBolt(c, bolt.BoltOptions{
+			CacheDir:     viper.GetString("storage.bolt.cache_dir"),
+			BoltFileName: viper.GetString("storage.bolt.bolt_file_name"),
+		})
 	})
 
 	// --- Provider providers ---
-	reg.RegisterProviderProvider(ctx, "openrouter", func(c context.Context, opts container.ProviderProviderOptions) (provider.Provider, error) {
-		return provider.NewOpenRouterProvider(opts.OpenRouterOptions)
+	reg.RegisterProviderProvider(ctx, "openrouter", func(c context.Context) (provider.Provider, error) {
+		return provider.NewOpenRouterProvider(provider.OpenRouterOptions{
+			APIKey: viper.GetString("providers.openrouter.api_key"),
+		})
 	})
-	reg.RegisterProviderProvider(ctx, "ollama", func(c context.Context, opts container.ProviderProviderOptions) (provider.Provider, error) {
-		return provider.NewOllamaProvider(opts.OllamaOptions)
+	reg.RegisterProviderProvider(ctx, "ollama", func(c context.Context) (provider.Provider, error) {
+		return provider.NewOllamaProvider(provider.OllamaOptions{
+			Host: viper.GetString("providers.ollama.host"),
+		})
 	})
-	reg.RegisterProviderProvider(ctx, "openai", func(c context.Context, opts container.ProviderProviderOptions) (provider.Provider, error) {
-		return provider.NewOpenAIProvider(opts.OpenAIOptions)
+	reg.RegisterProviderProvider(ctx, "openai", func(c context.Context) (provider.Provider, error) {
+		return provider.NewOpenAIProvider(provider.OpenAIOptions{
+			APIKey: viper.GetString("providers.openai.api_key"),
+		})
 	})
 
 	return reg
@@ -159,14 +171,7 @@ func initConfig() {
 		viper.SetConfigName(".stfg")
 	}
 
-	viper.SetEnvPrefix("STFG")
-	viper.AutomaticEnv() // read in environment variables that match
-
-	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
-	}
-
+	// Set defaults
 	viper.SetDefault("fly_finder.whitelist", []string{
 		"Superstore",
 		"Thrifty Foods",
@@ -180,6 +185,33 @@ func initConfig() {
 		"Nesters Market",
 		"Rexall",
 	})
+	viper.SetDefault("providers.openrouter.api_key", "")
+	viper.SetDefault("providers.openai.api_key", "")
+	viper.SetDefault("providers.ollama.host", "http://localhost:11434")
+	viper.SetDefault("storage.sqlite.cache_dir", "")
+	viper.SetDefault("storage.sqlite.sqlite_file_name", "stfg.sqlite.db")
+	viper.SetDefault("storage.bolt.cache_dir", "")
+	viper.SetDefault("storage.bolt.bolt_file_name", "stfg.bolt.db")
+
+	// ENV var overrides and bindings
+	viper.SetEnvPrefix("STFG")
+	viper.AutomaticEnv() // read in environment variables that match
+
+	viper.BindEnv("providers.openrouter.api_key")
+	viper.BindEnv("providers.openai.api_key")
+	viper.BindEnv("providers.ollama.host")
+	viper.BindEnv("storage.sqlite.cache_dir")
+
+	viper.BindEnv("storage.sqlite.sqlite_file_name")
+	viper.BindEnv("storage.bolt.cache_dir")
+	viper.BindEnv("storage.bolt.bolt_file_name")
+
+	// If a config file is found, read it in.
+	// config file overrides env vars
+	if err := viper.ReadInConfig(); err == nil {
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	}
+
 }
 
 func setUpLogger() (*zap.SugaredLogger, error) {
