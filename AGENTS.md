@@ -59,7 +59,7 @@ stfg/
 │   │   └── types.go       # Store, Flyer, FlyerItem, GroceryItem types
 │   ├── flipp/             # Flipp API client
 │   ├── reconciler/        # Flyer scraping & matching logic
-│   ├── provider/          # LLM providers (OpenRouter)
+│   ├── provider/          # LLM providers (OpenAI, Ollama, and OpenRouter)
 │   └── promptwriter/      # Prompt templates
 ├── models/                # Downloaded GGUF models (gitignored)
 ├── bin/                   # Built binary
@@ -150,7 +150,7 @@ stfg/
 
 ### Finding Deals
 1. `find-deals` → loads groceries + flyers from storage
-2. Uses embeddings for semantic matching
+2. Calls `NewOpenRouterProvider`, and lets the prompt writer match through `Provider.Send`, which returns decoded `[]GroceryFlyerMatch`
 3. Outputs matched deals
 
 ---
@@ -164,8 +164,9 @@ stfg/
 | `go.uber.org/zap` | Structured logging |
 | `github.com/tcpipuk/llama-go` | llama.cpp Go bindings |
 | `github.com/OpenRouterTeam/go-sdk` | LLM API (OpenRouter) |
+| `github.com/openai/openai-go/v3` | LLM API (OpenAI) |
+| `github.com/liliang-cn/ollama-go` | LLM API (Ollama) |
 | `github.com/h2non/gentleman` | HTTP client (Flipp API) |
-| `github.com/kaptinlin/jsonrepair` | JSON repair |
 
 ---
 
@@ -219,3 +220,4 @@ stfg/
 | Add retailer to whitelist | `cmd/scrapeFlyers.go:validFlyers` |
 | Adjust llama.cpp build flags | `Makefile:15` (CFLAGS/CXXFLAGS) |
 | Config/logging setup | `cmd/root.go` |
+| Structured match type and schema | `internal/provider/types.go` |
