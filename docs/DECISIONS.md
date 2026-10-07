@@ -49,3 +49,9 @@ This document records important architectural decisions, deviations, and non-int
 **Decision:** `Provider.Send` returns `[]GroceryFlyerMatch` for every backend. The model is asked for one JSON object, `{"matches":[...]}`, not a bare array and not free text. OpenAI, Ollama, and OpenRouter all receive that same schema. Decoding lives next to the schema in the provider package so the three SDKs cannot drift.
 
 **Reason:** The only model call in the program has one response shape. A generic `Send[T]` was rejected. OpenAI strict structured outputs need a root object, so the wire format is an envelope even though callers receive the inner slice.
+
+## Provider-Agnostic Prompt Writer
+
+**Decision:** `PromptWriter` depends on `provider.Provider` directly. The model name is a constructor argument. `find-deals` passes `NewOpenRouterProvider` and `openrouter/free`. There is no local prompter interface and no OpenRouter-specific writer type.
+
+**Reason:** After `Send` returned `[]GroceryFlyerMatch`, the local interface duplicated `provider.Provider` and the writer hardcoded one model. Keeping provider choice at the command leaves OpenAI and Ollama unwired until a caller needs them, without a factory.

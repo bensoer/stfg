@@ -60,7 +60,7 @@ stfg/
 │   ├── flipp/             # Flipp API client
 │   ├── reconciler/        # Flyer scraping & matching logic
 │   ├── provider/          # LLM providers (OpenAI, Ollama, and OpenRouter)
-│   └── promptwriter/      # Prompt templates
+│   └── promptwriter/      # Builds the match prompt and validates provider matches
 ├── models/                # Downloaded GGUF models (gitignored)
 ├── bin/                   # Built binary
 ├── lib/                   # Compiled llama.cpp static libs
@@ -150,8 +150,9 @@ stfg/
 
 ### Finding Deals
 1. `find-deals` → loads groceries + flyers from storage
-2. Uses embeddings for semantic matching
-3. Outputs matched deals
+2. Calls `NewOpenRouterProvider`, passes the client and `openrouter/free` to `NewPromptWriter`
+3. Matching still goes through `Provider.Send` and the decoded `[]GroceryFlyerMatch`; the writer validates matches against real flyer rows
+4. Outputs matched deals
 
 ---
 
@@ -223,3 +224,4 @@ stfg/
 | Config/logging setup | `cmd/root.go` |
 | Structured match types | `internal/provider/types.go` |
 | Match schema and decoder | `internal/provider/utils.go` |
+| Prompt writer type | `internal/promptwriter/prompt_writer.go` |
