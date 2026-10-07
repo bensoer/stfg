@@ -4,6 +4,7 @@ Copyright © 2026 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"fmt"
 	"stfg/internal/flyerfinder"
 	"stfg/internal/flyerfinder/flipp"
 	"stfg/internal/reconciler/scrape"
@@ -24,14 +25,18 @@ var scrapeFlyersCmd = &cobra.Command{
 
 		finder := flipp.NewFinder(nil)
 		var f flyerfinder.FlyerFinder = finder
-		store := getStore(cmd)
+		store, err := getContainer(cmd).GetStorage(cmd.Context(), "json")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing storage: %v\n", err)
+			return
+		}
 
 		whitelist := viper.GetStringSlice("fly_finder.whitelist")
 		if len(whitelist) == 0 {
 			zap.S().Warn("fly_finder.whitelist is empty; no flyers will match")
 		}
 
-		err := scrape.Reconcile(cmd.Context(), f, store, scrape.ScrapeReconcilerOptions{
+		err = scrape.Reconcile(cmd.Context(), f, store, scrape.ScrapeReconcilerOptions{
 			PostalCode:           postalCode,
 			RetailGroupWhiteList: whitelist,
 		})

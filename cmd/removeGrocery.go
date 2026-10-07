@@ -17,9 +17,13 @@ var removeGroceryCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		item := args[0]
 
-		store := getStore(cmd)
+		store, err := getContainer(cmd).GetStorage(cmd.Context(), "json")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing storage: %v\n", err)
+			return
+		}
 
-		err := store.RemoveGrocery(cmd.Context(), item)
+		err = store.RemoveGrocery(cmd.Context(), item)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				fmt.Printf("Item '%s' not found\n", item)

@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 
 	"stfg/internal/embedding"
-	"stfg/internal/provider"
 	"stfg/internal/storage"
 )
 
@@ -20,7 +19,17 @@ var addGroceryCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		item := args[0]
 
-		store := getStore(cmd)
+		store, err := getContainer(cmd).GetStorage(cmd.Context(), "json")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing storage: %v\n", err)
+			return
+		}
+
+		provider, err := getContainer(cmd).GetProvider(cmd.Context(), "openrouter")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing provider: %v\n", err)
+			return
+		}
 
 		has, err := store.HasGrocery(cmd.Context(), item)
 		if err != nil {
@@ -34,17 +43,7 @@ var addGroceryCmd = &cobra.Command{
 
 		zap.S().Info("Getting Embedding Value For Grocery")
 
-		apiKey := viper.GetString("api_key")
-		if apiKey == "" {
-			apiKeyFlag, _ := cmd.Flags().GetString("api-key")
-			apiKey = apiKeyFlag
-		}
-		client, err := provider.NewOpenRouterProvider(apiKey)
-		if err != nil {
-			zap.S().Error("Failed To Create Grocery Embedding Data", err)
-			return
-		}
-		embedder, err := embedding.NewGroceryEmbedder(client, "openai/text-embedding-3-small")
+		embedder, err := embedding.NewGroceryEmbedder(provider, "openai/text-embedding-3-small")
 		if err != nil {
 			zap.S().Error("Failed To Create Grocery Embedding Data", err)
 			return

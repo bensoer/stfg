@@ -19,32 +19,32 @@ func NewContainerRegistry() *ContainerRegistry {
 	}
 }
 
-func (c *ContainerRegistry) RegisterStorageProvider(ctx context.Context, key string, loader func(ctx context.Context, opts StorageProviderOptions) (storage.StorageProvider, error)) {
+func (c *ContainerRegistry) RegisterStorageProvider(ctx context.Context, key string, loader func(ctx context.Context) (storage.StorageProvider, error)) {
 	c.storageProviders[key] = StorageProviderEntry{
 		ctx:    ctx,
 		loader: loader,
 	}
 }
 
-func (c *ContainerRegistry) RegisterProviderProvider(ctx context.Context, key string, loader func(ctx context.Context, opts ProviderProviderOptions) (provider.Provider, error)) {
+func (c *ContainerRegistry) RegisterProviderProvider(ctx context.Context, key string, loader func(ctx context.Context) (provider.Provider, error)) {
 	c.providerProviders[key] = ProviderProviderEntry{
 		ctx:    ctx,
 		loader: loader,
 	}
 }
 
-func (c *ContainerRegistry) GetStorageProvider(ctx context.Context, key string, opts StorageProviderOptions) (storage.StorageProvider, error) {
+func (c *ContainerRegistry) GetStorage(ctx context.Context, key string) (storage.StorageProvider, error) {
 	entry, exists := c.storageProviders[key]
 	if !exists {
 		return nil, fmt.Errorf("storage provider with key '%s' not found", key)
 	}
-	return entry.loader(ctx, opts)
+	return entry.loader(ctx)
 }
 
-func (c *ContainerRegistry) GetProviderProvider(ctx context.Context, key string, opts ProviderProviderOptions) (provider.Provider, error) {
+func (c *ContainerRegistry) GetProvider(ctx context.Context, key string) (provider.Provider, error) {
 	entry, exists := c.providerProviders[key]
 	if !exists {
 		return nil, fmt.Errorf("provider provider with key '%s' not found", key)
 	}
-	return entry.loader(ctx, opts)
+	return entry.loader(ctx)
 }
