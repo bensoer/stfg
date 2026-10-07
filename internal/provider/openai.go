@@ -64,3 +64,29 @@ func (op *OpenAIProvider) Send(ctx context.Context, prompt string, model string)
 	}
 	return matches, nil
 }
+
+// Embed returns one float32 embedding for text from model.
+func (op *OpenAIProvider) Embed(ctx context.Context, text string, model string) ([]float32, error) {
+	if text == "" {
+		return nil, &ValidationError{Provider: "openai", Field: "text", Msg: "empty"}
+	}
+	if model == "" {
+		return nil, &ValidationError{Provider: "openai", Field: "model", Msg: "empty"}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+
+	res, err := op.Client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Model:          model,
+		Input:          openai.EmbeddingNewParamsInputUnion{OfString: openai.String(text)},
+		EncodingFormat: openai.EmbeddingNewParamsEncodingFormatFloat,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai embed: %w", err)
+	}
+	if res == nil || len(res.Data) != 1 {
+		return nil, &ModelResponseError{Provider: "openai", Raw: fmt.Sprintf("expected exactly one embedding, got %d", len(res.Data))}
+	}
+	return toFloat32Vector("openai", res.Data[0].Embedding)
+}

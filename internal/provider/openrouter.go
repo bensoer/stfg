@@ -9,6 +9,7 @@ import (
 
 	openrouter "github.com/OpenRouterTeam/go-sdk"
 	"github.com/OpenRouterTeam/go-sdk/models/components"
+	"github.com/OpenRouterTeam/go-sdk/models/operations"
 	"github.com/OpenRouterTeam/go-sdk/optionalnullable"
 )
 
@@ -90,4 +91,39 @@ func (op *OpenRouterProvider) Send(ctx context.Context, prompt string, model str
 		return nil, fmt.Errorf("openrouter decode matches: %w", err)
 	}
 	return matches, nil
+}
+
+// Embed returns one float32 embedding for text from model.
+func (op *OpenRouterProvider) Embed(ctx context.Context, text string, model string) ([]float32, error) {
+	if text == "" {
+		return nil, &ValidationError{Provider: "openrouter", Field: "text", Msg: "empty"}
+	}
+	if model == "" {
+		return nil, &ValidationError{Provider: "openrouter", Field: "model", Msg: "empty"}
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+
+	res, err := op.client.Embeddings.Generate(ctx, operations.CreateEmbeddingsRequest{
+		Model:          model,
+		Input:          operations.CreateInputUnionStr(text),
+		EncodingFormat: operations.EncodingFormatFloat.ToPointer(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openrouter embed: %w", err)
+	}
+	if res == nil || res.CreateEmbeddingsResponseBody == nil {
+		return nil, &ModelResponseError{Provider: "openrouter", Raw: "empty response"}
+	}
+	data := res.CreateEmbeddingsResponseBody.Data
+	if len(data) != 1 {
+		return nil, &ModelResponseError{Provider: "openrouter", Raw: fmt.Sprintf("expected exactly one embedding, got %d", len(data))}
+	}
+	switch data[0].Embedding.Type {
+	case operations.EmbeddingTypeArrayOfNumber:
+		return toFloat32Vector("openrouter", data[0].Embedding.ArrayOfNumber)
+	default:
+		return nil, &ModelResponseError{Provider: "openrouter", Raw: fmt.Sprintf("unsupported embedding type %q", data[0].Embedding.Type)}
+	}
 }

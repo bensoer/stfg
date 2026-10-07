@@ -4,8 +4,11 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 
+	"stfg/internal/embedding"
+	"stfg/internal/provider"
 	"stfg/internal/storage"
 )
 
@@ -30,7 +33,23 @@ var addGroceryCmd = &cobra.Command{
 		}
 
 		zap.S().Info("Getting Embedding Value For Grocery")
-		embedding, err := models.CreateGroceryEmbedding(item)
+
+		apiKey := viper.GetString("api_key")
+		if apiKey == "" {
+			apiKeyFlag, _ := cmd.Flags().GetString("api-key")
+			apiKey = apiKeyFlag
+		}
+		client, err := provider.NewOpenRouterProvider(apiKey)
+		if err != nil {
+			zap.S().Error("Failed To Create Grocery Embedding Data", err)
+			return
+		}
+		embedder, err := embedding.NewGroceryEmbedder(client, "openai/text-embedding-3-small")
+		if err != nil {
+			zap.S().Error("Failed To Create Grocery Embedding Data", err)
+			return
+		}
+		vector, err := embedder.CreateGroceryEmbedding(cmd.Context(), item)
 		if err != nil {
 			zap.S().Error("Failed To Create Grocery Embedding Data", err)
 			return
@@ -38,7 +57,7 @@ var addGroceryCmd = &cobra.Command{
 
 		newGrocery := storage.GroceryItem{
 			Name:      item,
-			Embedding: embedding,
+			Embedding: vector,
 		}
 
 		if err := store.AddGrocery(cmd.Context(), newGrocery); err != nil {
@@ -50,5 +69,7 @@ var addGroceryCmd = &cobra.Command{
 }
 
 func init() {
+	addGroceryCmd.Flags().StringP("api-key", "a", "", "API key (optional, can be set via config file)")
+	viper.BindPFlag("api_key", addGroceryCmd.Flags().Lookup("api-key"))
 	groceriesCmd.AddCommand(addGroceryCmd)
 }
