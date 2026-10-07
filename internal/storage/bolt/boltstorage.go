@@ -15,8 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"go.etcd.io/bbolt"
 	"stfg/internal/storage"
+
+	"go.etcd.io/bbolt"
 )
 
 const (
@@ -28,16 +29,6 @@ const (
 	bucketStores        = "stores"
 )
 
-// Options configures the BoltDB storage backend.
-type Options struct {
-	// CacheDir is the directory where the BoltDB database file is created.
-	// If empty, storage.CacheDir() is used.
-	CacheDir string
-	// BoltFileName overrides the default database file name (stfg.bolt).
-	// Mainly useful for tests.
-	BoltFileName string
-}
-
 // BoltStorage implements storage.Storage backed by BoltDB.
 type BoltStorage struct {
 	db       *bbolt.DB
@@ -45,11 +36,11 @@ type BoltStorage struct {
 	closeErr error
 }
 
-var _ storage.Storage = (*BoltStorage)(nil)
+var _ storage.StorageProvider = (*BoltStorage)(nil)
 
 // NewBolt opens (creating the directory and file as needed) and migrates a
 // BoltDB storage backend. The caller must call Close.
-func NewBolt(ctx context.Context, opts Options) (*BoltStorage, error) {
+func NewBolt(ctx context.Context, opts BoltOptions) (*BoltStorage, error) {
 	dir := opts.CacheDir
 	if dir == "" {
 		var err error

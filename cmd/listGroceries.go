@@ -11,7 +11,11 @@ var listGroceriesCmd = &cobra.Command{
 	Short: "List all grocery items in the list",
 	Long:  "Lists all grocery items in the JSON file list",
 	Run: func(cmd *cobra.Command, args []string) {
-		store := getStore(cmd)
+		store, err := getContainer(cmd).GetStorage(cmd.Context(), "json")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing storage: %v\n", err)
+			return
+		}
 
 		groceries, err := store.ListGroceries(cmd.Context())
 		if err != nil {

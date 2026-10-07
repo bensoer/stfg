@@ -54,7 +54,7 @@ func sliceEqualFloat32(a, b []float32) bool {
 func newTestStorage(t *testing.T) (*SQLiteStorage, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := NewSQLite(ctx, Options{CacheDir: t.TempDir(), SQLiteFileName: "test.sqlite"})
+	s, err := NewSQLite(ctx, SQLiteOptions{CacheDir: t.TempDir(), SQLiteFileName: "test.sqlite"})
 	if err != nil {
 		t.Fatalf("NewSQLite failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func newTestStorage(t *testing.T) (*SQLiteStorage, context.Context) {
 // TestStorageContract runs the cross-backend parity suite against sqlite.
 func TestStorageContract(t *testing.T) {
 	parity.TestStorageContract(t, func(t *testing.T) storage.Storage {
-		s, err := NewSQLite(context.Background(), Options{CacheDir: t.TempDir(), SQLiteFileName: "test.sqlite"})
+		s, err := NewSQLite(context.Background(), SQLiteOptions{CacheDir: t.TempDir(), SQLiteFileName: "test.sqlite"})
 		if err != nil {
 			t.Fatalf("NewSQLite: %v", err)
 		}
@@ -80,7 +80,7 @@ func TestNewSQLite_CreatesDirAndFileWithOwnerOnlyPerms(t *testing.T) {
 	cacheDir := filepath.Join(t.TempDir(), "created-by-sqlite")
 	ctx := context.Background()
 
-	fs, err := NewSQLite(ctx, Options{CacheDir: cacheDir, SQLiteFileName: "test.sqlite"})
+	fs, err := NewSQLite(ctx, SQLiteOptions{CacheDir: cacheDir, SQLiteFileName: "test.sqlite"})
 	if err != nil {
 		t.Fatalf("NewSQLite failed: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestMigrate_LegacyDBWithoutDisplayName(t *testing.T) {
 	db.Close()
 
 	ctx := context.Background()
-	fs, err := NewSQLite(ctx, Options{CacheDir: tmpDir, SQLiteFileName: "legacy.sqlite"})
+	fs, err := NewSQLite(ctx, SQLiteOptions{CacheDir: tmpDir, SQLiteFileName: "legacy.sqlite"})
 	if err != nil {
 		t.Fatalf("NewSQLite on legacy db: %v", err)
 	}

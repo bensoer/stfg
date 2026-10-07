@@ -8,7 +8,6 @@ import (
 	"go.uber.org/zap"
 
 	"stfg/internal/promptwriter"
-	"stfg/internal/provider"
 )
 
 // FindDealsCmd represents the find-deals command
@@ -17,7 +16,17 @@ var FindDealsCmd = &cobra.Command{
 	Short: "Find deals in flyers matching your grocery list",
 	Long:  `Search through downloaded flyers to find items from your grocery list that are on sale.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		store := getStore(cmd)
+		store, err := getContainer(cmd).GetStorage(cmd.Context(), "json")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing storage: %v\n", err)
+			return
+		}
+
+		provider, err := getContainer(cmd).GetProvider(cmd.Context(), "openrouter")
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Error initializing provider: %v\n", err)
+			return
+		}
 
 		flyers, err := store.ListFlyers(cmd.Context())
 		if err != nil {
@@ -46,12 +55,8 @@ var FindDealsCmd = &cobra.Command{
 			apiKeyFlag, _ := cmd.Flags().GetString("api-key")
 			apiKey = apiKeyFlag
 		}
-		client, err := provider.NewOpenRouterProvider(apiKey)
-		if err != nil {
-			zap.S().Errorf("Error creating OpenRouter provider: %v", err)
-			return
-		}
-		promptWriter, err := promptwriter.NewPromptWriter(client, "openrouter/free")
+
+		promptWriter, err := promptwriter.NewPromptWriter(provider, "openrouter/free")
 		if err != nil {
 			zap.S().Errorf("Error creating prompt writer: %v", err)
 			return

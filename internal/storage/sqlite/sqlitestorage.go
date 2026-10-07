@@ -18,8 +18,9 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
 	"stfg/internal/storage"
+
+	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
 
 const defaultFileName = "stfg.sqlite"
@@ -40,16 +41,6 @@ var createTableStatements = []string{
 	`CREATE INDEX IF NOT EXISTS idx_flyers_valid_to ON flyers(valid_to);`,
 }
 
-// Options configures the SQLite storage backend.
-type Options struct {
-	// CacheDir is the directory where the SQLite database file is created.
-	// If empty, storage.CacheDir() is used.
-	CacheDir string
-	// SQLiteFileName overrides the default database file name (stfg.sqlite).
-	// Mainly useful for tests.
-	SQLiteFileName string
-}
-
 // SQLiteStorage implements storage.Storage on top of a SQLite database file.
 type SQLiteStorage struct {
 	db       *sql.DB
@@ -57,11 +48,11 @@ type SQLiteStorage struct {
 	closeErr error
 }
 
-var _ storage.Storage = (*SQLiteStorage)(nil)
+var _ storage.StorageProvider = (*SQLiteStorage)(nil)
 
 // NewSQLite opens (creating the directory and file as needed) and migrates a
 // SQLite storage backend rooted at opts.CacheDir.
-func NewSQLite(ctx context.Context, opts Options) (*SQLiteStorage, error) {
+func NewSQLite(ctx context.Context, opts SQLiteOptions) (*SQLiteStorage, error) {
 	if opts.CacheDir == "" {
 		dir, err := storage.CacheDir()
 		if err != nil {

@@ -32,34 +32,67 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"stfg/internal/container"
+	"stfg/internal/provider"
 	"stfg/internal/storage"
+	"stfg/internal/storage/bolt"
 	"stfg/internal/storage/json"
+	"stfg/internal/storage/sqlite"
 )
-
-// storageCtxKey is the context key used to pass the storage.Storage
-// handle from the groceries command's PersistentPreRunE to subcommand Run handlers.
-type storageCtxKey struct{}
 
 // getStore retrieves the storage.Storage handle from the cobra command context.
 // The storage handle is set by the root command's PersistentPreRunE, so every
 // subcommand has access to it. If the handle is missing (should not happen in
 // normal operation) a fresh store is created as a fallback.
-func getStore(cmd *cobra.Command) storage.Storage {
-	store, ok := cmd.Context().Value(storageCtxKey{}).(storage.Storage)
-	if ok && store != nil {
-		return store
+func setupRegistry(ctx context.Context) *container.ContainerRegistry {
+	reg := container.NewContainerRegistry()
+
+	// --- Storage providers ---
+	reg.RegisterStorageProvider(ctx, "json", func(c context.Context) (storage.StorageProvider, error) {
+		return json.NewJSON(c, json.JSONOptions{})
+	})
+	reg.RegisterStorageProvider(ctx, "sqlite", func(c context.Context) (storage.StorageProvider, error) {
+		return sqlite.NewSQLite(c, sqlite.SQLiteOptions{
+			CacheDir:       viper.GetString("storage.sqlite.cache_dir"),
+			SQLiteFileName: viper.GetString("storage.sqlite.sqlite_file_name"),
+		})
+	})
+	reg.RegisterStorageProvider(ctx, "bolt", func(c context.Context) (storage.StorageProvider, error) {
+		return bolt.NewBolt(c, bolt.BoltOptions{
+			CacheDir:     viper.GetString("storage.bolt.cache_dir"),
+			BoltFileName: viper.GetString("storage.bolt.bolt_file_name"),
+		})
+	})
+
+	// --- Provider providers ---
+	reg.RegisterProviderProvider(ctx, "openrouter", func(c context.Context) (provider.Provider, error) {
+		return provider.NewOpenRouterProvider(provider.OpenRouterOptions{
+			APIKey: viper.GetString("providers.openrouter.api_key"),
+		})
+	})
+	reg.RegisterProviderProvider(ctx, "ollama", func(c context.Context) (provider.Provider, error) {
+		return provider.NewOllamaProvider(provider.OllamaOptions{
+			Host: viper.GetString("providers.ollama.host"),
+		})
+	})
+	reg.RegisterProviderProvider(ctx, "openai", func(c context.Context) (provider.Provider, error) {
+		return provider.NewOpenAIProvider(provider.OpenAIOptions{
+			APIKey: viper.GetString("providers.openai.api_key"),
+		})
+	})
+
+	return reg
+}
+
+// registryCtxKey is the context key for the container registry.
+type registryCtxKey struct{}
+
+func getContainer(cmd *cobra.Command) *container.ContainerRegistry {
+	reg, ok := cmd.Context().Value(registryCtxKey{}).(*container.ContainerRegistry)
+	if ok && reg != nil {
+		return reg
 	}
-	// Fallback: initialize a fresh store. This should only trigger if
-	// PersistentPreRunE failed silently or during testing.
-	store, err := json.NewJSON(cmd.Context())
-	if err != nil {
-		// Last resort — returning nil will cause a panic at the call site
-		// which is better than silently proceeding without storage.
-		return nil
-	}
-	ctx := context.WithValue(cmd.Context(), storageCtxKey{}, store)
-	cmd.SetContext(ctx)
-	return store
+	return nil
 }
 
 var cfgFile string
@@ -107,13 +140,11 @@ func init() {
 
 		zap.ReplaceGlobals(logger.Desugar())
 
-		// Initialize storage for every command. The handle is stored on
-		// the command context so subcommands can retrieve it via getStore().
-		store, err := json.NewJSON(cmd.Context())
-		if err != nil {
-			return err
-		}
-		ctx := context.WithValue(cmd.Context(), storageCtxKey{}, store)
+		// Build the container registry and register all loaders.
+		reg := setupRegistry(cmd.Context())
+		// Assign the registry to the command context so every subcommand can
+		// retrieve it via getRegistry(cmd).
+		ctx := context.WithValue(cmd.Context(), registryCtxKey{}, reg)
 		cmd.SetContext(ctx)
 
 		return nil
@@ -140,14 +171,7 @@ func initConfig() {
 		viper.SetConfigName(".stfg")
 	}
 
-	viper.SetEnvPrefix("STFG")
-	viper.AutomaticEnv() // read in environment variables that match
-
-	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
-	}
-
+	// Set defaults
 	viper.SetDefault("fly_finder.whitelist", []string{
 		"Superstore",
 		"Thrifty Foods",
@@ -161,6 +185,33 @@ func initConfig() {
 		"Nesters Market",
 		"Rexall",
 	})
+	viper.SetDefault("providers.openrouter.api_key", "")
+	viper.SetDefault("providers.openai.api_key", "")
+	viper.SetDefault("providers.ollama.host", "http://localhost:11434")
+	viper.SetDefault("storage.sqlite.cache_dir", "")
+	viper.SetDefault("storage.sqlite.sqlite_file_name", "stfg.sqlite.db")
+	viper.SetDefault("storage.bolt.cache_dir", "")
+	viper.SetDefault("storage.bolt.bolt_file_name", "stfg.bolt.db")
+
+	// ENV var overrides and bindings
+	viper.SetEnvPrefix("STFG")
+	viper.AutomaticEnv() // read in environment variables that match
+
+	viper.BindEnv("providers.openrouter.api_key")
+	viper.BindEnv("providers.openai.api_key")
+	viper.BindEnv("providers.ollama.host")
+	viper.BindEnv("storage.sqlite.cache_dir")
+
+	viper.BindEnv("storage.sqlite.sqlite_file_name")
+	viper.BindEnv("storage.bolt.cache_dir")
+	viper.BindEnv("storage.bolt.bolt_file_name")
+
+	// If a config file is found, read it in.
+	// config file overrides env vars
+	if err := viper.ReadInConfig(); err == nil {
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	}
+
 }
 
 func setUpLogger() (*zap.SugaredLogger, error) {

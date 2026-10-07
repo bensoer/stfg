@@ -32,7 +32,7 @@ type FileStorage struct {
 // NewJSON returns the JSON-backed storage. The cache directory is resolved
 // from storage.CacheDir() and created with mode 0o700. Files are written
 // with mode 0o600.
-func NewJSON(ctx context.Context) (*FileStorage, error) {
+func NewJSON(ctx context.Context, opts JSONOptions) (*FileStorage, error) {
 	dir, err := storage.CacheDir()
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func NewJSONAt(ctx context.Context, dir string) (*FileStorage, error) {
 // Compile-time assertion that *FileStorage satisfies storage.Storage.
 // If *FileStorage ever stops implementing the interface (e.g. a method
 // signature changed), this line will produce a clear compile error.
-var _ storage.Storage = (*FileStorage)(nil)
+var _ storage.StorageProvider = (*FileStorage)(nil)
 
 // --- Lifecycle ---
 
