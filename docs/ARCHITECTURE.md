@@ -26,7 +26,7 @@ All storage handles are injected via Cobra context so subcommands can retrieve t
 - **PromptWriter** – Generates prompts for the LLM provider (OpenRouter) to perform semantic matching.
 
 ### Providers
-- **OpenRouter** – LLM service for generating matching responses between flyer items and grocery list.
+- **OpenAI, Ollama, and OpenRouter** – Implementations of `internal/provider.Provider`. `Send` returns `[]GroceryFlyerMatch` decoded from a shared `{"matches":[...]}` JSON schema.
 - **Flipp API** – Source for retail flyers; parsed by the `Flipp` client.
 
 ### Data Flow
@@ -44,7 +44,7 @@ stfg/
 │   ├── storage/     # Storage backends (JSON, SQLite, BoltDB)
 │   ├── flyerfinder/ # Flipp API integration
 │   ├── reconciler/  # Flyer matching logic
-│   ├── provider/    # OpenRouter LLM provider
+│   ├── provider/    # OpenAI, Ollama, and OpenRouter LLM providers
 │   └── promptwriter/ # Prompt template generation
 ├── docs/            # Documentation (ARCHITECTURE.md, DECISIONS.md, PROJECT_CONTEXT.md)
 ├── main.go          # Entry point (invokes root.Execute())
@@ -65,4 +65,4 @@ stfg/
 - **Logging** – Zap (structured JSON + console)
 - **Serialization** – `github.com/spf13/viper` (config), `github.com/llama.cpp/llama-go` (embeddings)
 - **Database** – JSON file (default), SQLite, BoltDB
-- **External Services** – Flipp API (retail flyers), OpenRouter (LLM)
+- **External Services** – Flipp API (retail flyers), OpenAI, Ollama, and OpenRouter (LLM)
