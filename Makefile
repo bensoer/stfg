@@ -9,7 +9,7 @@
 # build: $(LLAMA_STAMP) copy-libs
 build:
 # 	CGO_LDFLAGS="-L$(LIB_DIR)" go build -o ./bin/stfg main.go
-	go build -o ./bin/stfg main.go
+	go build -o ./bin/stfg cmd/stfg/main.go
 
 # $(LLAMA_STAMP):
 # 	mkdir -p res

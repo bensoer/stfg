@@ -32,6 +32,10 @@ This document records important architectural decisions, deviations, and non-int
 
 **Reason:** Structured JSON logs are easier to parse and debug than plain text. The `--quiet` flag suppresses console output while still writing to the log file.
 
+**Decision:** Console Zap output goes to stderr (`cmd.ErrOrStderr()`), not stdout. Command results stay on stdout (`cmd.OutOrStdout()`). Operational failures are returned from `RunE` and logged once in `Execute`. Cobra error and usage printing is silenced so the same failure is not printed again. Library code returns errors and does not log them.
+
+**Reason:** Stdout has to stay pipeable. Diagnostics and results are different streams. Logging an error inside a library and again at the command boundary would show it twice.
+
 ## Configuration
 
 **Decision:** Centralize configuration via Viper, reading from a YAML file at `~/.stfg.yaml`, environment variables prefixed with `STFG_`, and CLI flags.

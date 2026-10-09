@@ -107,7 +107,6 @@ RetryLoop:
 		gfms, err := p.provider.Send(ctx, prompt, p.model)
 		if err != nil {
 			// Something bizarre happened, we should abort right away
-			zap.S().Errorf("Error sending prompt: %v", err)
 			return nil, fmt.Errorf("error sending prompt: %w", err)
 		}
 

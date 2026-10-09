@@ -21,8 +21,19 @@ THE SOFTWARE.
 */
 package main
 
-import "stfg/cmd"
+import (
+	"fmt"
+	"os"
+	"stfg/internal/bootstrap"
+)
 
 func main() {
-	cmd.Execute()
+	rootCmd := bootstrap.BootstrapCobraRoot()
+	container := bootstrap.RegisterProviders(rootCmd.Context())
+	rootCmd = bootstrap.RegisterSubCommands(rootCmd, container)
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
