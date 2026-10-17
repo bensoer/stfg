@@ -44,9 +44,7 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 			continue
 		}
 
-		// If the flyer already exists, skip AddFlyer but still reconcile
-		// its items below; an existing flyer can carry new or changed
-		// items that the embedder has not yet seen.
+		// If the flyer already exists, there is nothing to do
 		has, err := store.HasFlyer(ctx, flyer.ID)
 		if err != nil {
 			return err
