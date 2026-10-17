@@ -8,6 +8,7 @@ require (
 	github.com/openai/openai-go/v3 v3.64.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	github.com/viterin/vek v0.4.3
 	go.etcd.io/bbolt v1.5.0
 	go.uber.org/zap v1.28.0
 	gopkg.in/h2non/gentleman.v2 v2.0.5
@@ -15,6 +16,7 @@ require (
 )
 
 require (
+	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
@@ -38,8 +40,10 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
+	github.com/viterin/partial v1.1.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
