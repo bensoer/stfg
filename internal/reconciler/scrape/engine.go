@@ -44,13 +44,15 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 			continue
 		}
 
-		isNewFlyer, err := reconcileFlyer(ctx, store, flyer)
+		has, err := store.HasFlyer(ctx, flyer.ID)
 		if err != nil {
 			return err
 		}
-
-		if isNewFlyer {
+		if !has {
 			log.Infof("Adding Flyer \"%s - %s\" And Its Items", flyer.Merchant, flyer.Name)
+			if err := store.AddFlyer(ctx, flyer); err != nil {
+				return err
+			}
 		}
 
 		items, err := finder.FindFlyerItems(flyer.ID)
@@ -64,23 +66,6 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 	}
 
 	return nil
-}
-
-// reconcileFlyer inserts the flyer if it is not yet stored. The returned bool
-// is true when the flyer was just added; an existing flyer is left untouched
-// so its items can still be reconciled on the current run.
-func reconcileFlyer(ctx context.Context, store storage.StorageProvider, flyer storage.Flyer) (bool, error) {
-	has, err := store.HasFlyer(ctx, flyer.ID)
-	if err != nil {
-		return false, err
-	}
-	if has {
-		return false, nil
-	}
-	if err := store.AddFlyer(ctx, flyer); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // reconcileFlyerItems upserts each scraped item against the rows already
