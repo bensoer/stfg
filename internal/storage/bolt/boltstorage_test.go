@@ -63,7 +63,7 @@ func newTestStorage(t *testing.T) (*BoltStorage, context.Context) {
 
 // TestStorageContract runs the cross-backend parity suite against bolt.
 func TestStorageContract(t *testing.T) {
-	parity.TestStorageContract(t, func(t *testing.T) storage.Storage {
+	parity.TestStorageContract(t, func(t *testing.T) storage.StorageProvider {
 		s, err := NewBolt(context.Background(), BoltOptions{CacheDir: t.TempDir(), BoltFileName: "test.bolt"})
 		if err != nil {
 			t.Fatalf("NewBolt: %v", err)

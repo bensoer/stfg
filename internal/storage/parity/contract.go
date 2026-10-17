@@ -58,17 +58,17 @@ func equalFloat32(a, b []float32) bool {
 
 // newStore is a convenience for subtests: it builds a fresh backend and
 // registers a cleanup that closes it.
-func newStore(t *testing.T, factory func(*testing.T) storage.Storage) storage.Storage {
+func newStore(t *testing.T, factory func(*testing.T) storage.StorageProvider) storage.StorageProvider {
 	t.Helper()
 	s := factory(t)
 	t.Cleanup(func() { s.Close() })
 	return s
 }
 
-// TestStorageContract runs every method of storage.Storage against a fresh
+// TestStorageContract runs every method of storage.StorageProvider against a fresh
 // instance returned by factory. factory must return a new, empty backend; it
 // is called once per subtest so subtests are fully isolated.
-func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage) {
+func TestStorageContract(t *testing.T, factory func(*testing.T) storage.StorageProvider) {
 	t.Helper()
 	ctx := context.Background()
 

@@ -117,6 +117,18 @@ func (m *mockStore) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (bo
 	return false, nil
 }
 
+func (m *mockStore) UpdateFlyerItem(ctx context.Context, item storage.FlyerItem) error {
+	items := m.items[item.FlyerID]
+	for i := range items {
+		if items[i].ID == item.ID {
+			items[i] = item
+			m.items[item.FlyerID] = items
+			return nil
+		}
+	}
+	return storage.ErrNotFound
+}
+
 func (m *mockStore) PruneExpired(ctx context.Context, now time.Time) error {
 	var kept []storage.Flyer
 	for _, f := range m.flyers {

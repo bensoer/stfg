@@ -29,6 +29,13 @@ type StorageProvider interface {
 
 	// Flyer items
 	AddFlyerItem(ctx context.Context, item FlyerItem) error
+	// UpdateFlyerItem replaces the row identified by (item.FlyerID, item.ID)
+	// with the supplied FlyerItem. It does not insert; a missing row or
+	// missing parent flyer returns ErrNotFound. Used by the scrape
+	// reconciler to write a freshly-computed embedding or a changed field
+	// without going through AddFlyerItem (which would reject the existing
+	// row as a duplicate).
+	UpdateFlyerItem(ctx context.Context, item FlyerItem) error
 	RemoveFlyerItem(ctx context.Context, flyerID, itemID int64) error
 	ListFlyerItems(ctx context.Context, flyerID int64) ([]FlyerItem, error)
 	HasFlyerItem(ctx context.Context, flyerID, itemID int64) (bool, error)
