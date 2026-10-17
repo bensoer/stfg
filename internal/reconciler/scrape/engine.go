@@ -114,16 +114,19 @@ func reconcileFlyerItems(
 		existing, existed := byID[item.ID]
 
 		if !existed {
-			embedding, err := embedItem(ctx, embedder, text)
-			if err != nil {
-				return err
+			// New item: persist a nil embedding when the text is empty
+			// (find-deals skips such items silently); otherwise embed once
+			// and store the vector.
+			if text != "" {
+				embedding, err := embedder.CreateGroceryEmbedding(ctx, text)
+				if err != nil {
+					return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
+				}
+				item.Embedding = embedding
+				embeddedCount++
 			}
-			item.Embedding = embedding
 			if err := store.AddFlyerItem(ctx, item); err != nil {
 				return err
-			}
-			if embedding != nil {
-				embeddedCount++
 			}
 			continue
 		}
@@ -158,21 +161,6 @@ func reconcileFlyerItems(
 		log.Infof("Flyer %d: embedded %d items", flyerID, embeddedCount)
 	}
 	return nil
-}
-
-// embedItem returns the embedding for text or nil when text is empty. The
-// empty-text branch is what keeps an item whose brand and name are both blank
-// from being sent to the model and from being persisted with a zero-length
-// BLOB that round-trips ambiguously.
-func embedItem(ctx context.Context, embedder Embedder, text string) ([]float32, error) {
-	if text == "" {
-		return nil, nil
-	}
-	vec, err := embedder.CreateGroceryEmbedding(ctx, text)
-	if err != nil {
-		return nil, fmt.Errorf("scrape: embed text %q: %w", text, err)
-	}
-	return vec, nil
 }
 
 // itemChanged reports whether item differs from existing on any column that
