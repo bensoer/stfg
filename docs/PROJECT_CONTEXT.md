@@ -20,7 +20,7 @@ Anyone who wants to save money on groceries by comparing weekly flyer deals agai
 | Feature | Command | Description |
 |---------|---------|-------------|
 | Add grocery item | `stfg groceries add-grocery <item>` | Adds an item with a generated embedding. Duplicate detection is case-insensitive. |
-| List groceries | `stfg groceries list` | Shows all items in the grocery list. |
+| List groceries | `stfg groceries list-groceries` | Shows all items in the grocery list. |
 | Remove grocery item | `stfg groceries remove-grocery <item>` | Removes an item by name (case-insensitive). |
 | Scrape flyers | `stfg scrape-flyers <postal-code>` | Fetches flyers from Flipp API for the given postal code, filtered to a whitelist of retailers. |
 | Find deals | `stfg find-deals` | Matches grocery list items against scraped flyer items using an LLM (OpenRouter) and prints the best deals. |
@@ -31,14 +31,14 @@ Anyone who wants to save money on groceries by comparing weekly flyer deals agai
 
 | Layer | Technology |
 |-------|------------|
-| Language | Go 1.26+ |
+| Language | Go 1.27 |
 | CLI Framework | Cobra |
-| Logging | Zap (structured JSON + console) |
+| Logging | Zap (JSON file + console stderr) |
 | Configuration | Viper (YAML, env vars `STFG_*`, CLI flags) |
-| Storage | JSON files (OS cache dir), optional SQLite, BoltDB |
-| Embeddings | llama.cpp via `tcpipuk/llama-go` (Qwen3-Embedding-0.6B-GGUF, Q8_0) |
+| Storage | JSON files in the OS cache dir. SQLite and Bolt implement the same storage contract but are not selected by the commands. |
+| Embeddings | Hosted model through `provider.Provider.Embed` |
 | Flyer Source | Flipp API |
-| LLM Provider | OpenRouter (configurable model) |
+| Deal matching | LLM prompt through OpenRouter, not a vector search |
 
 ---
 
@@ -46,40 +46,32 @@ Anyone who wants to save money on groceries by comparing weekly flyer deals agai
 
 **Config file:** `~/.stfg.yaml` (or `--config` flag)
 
-**Environment variables (prefix `STFG_`):**
-- `STFG_CONFIG` — config file path
-- `STFG_LOG_FILE` — log output file
-- `STFG_LOG_LEVEL` — log level (debug/info/warn/error)
-- `STFG_QUIET` — suppress console output
+**Flags:** `--config`, `--log-file`, `--log-level`, `--quiet`. Viper maps those flags and reads `STFG_*` env vars. Nested keys use underscores (`STFG_PROVIDERS_OPENROUTER_API_KEY`, `STFG_FLY_FINDER_WHITELIST`).
 
-**Flags:**
-- `--config` — config file path
-- `--log-file` — log file path
-- `--log-level` — log level
-- `-q, --quiet` — mute console logs
+Retailer filtering defaults to `fly_finder.whitelist`. Model names are hardcoded in the commands, not in the config file.
 
 ---
 
 ## Data Model
 
 - **GroceryItem** — `Name`, `Embedding` (float32 vector)
-- **Flyer** — `ID`, `Merchant`, `Name`, `ValidFrom`, `ValidTo`, `PostalCode`
-- **FlyerItem** — `FlyerID`, `Name`, `Brand`, `Price`, `Category`
+- **Flyer** — `ID`, `Merchant`, `Name`, `ValidFrom`, `ValidTo`, `Stores`
+- **FlyerItem** — `ID`, `FlyerID`, `Name`, `Brand`, `Price`, `ImageURL`, `VideoURL`, `DisplayType`
+- **Store** — address fields for a flyer, including `PostalCode`
 
 ---
 
 ## Build & Run
 
 ```bash
-# Full build (clones llama-go, builds llama.cpp, compiles stfg)
 make
-
-# Run commands
 ./bin/stfg groceries add-grocery milk
-./bin/stfg groceries list
+./bin/stfg groceries list-groceries
 ./bin/stfg scrape-flyers V5K0A1
 ./bin/stfg find-deals
 ```
+
+`make` compiles `cmd/stfg/main.go` to `./bin/stfg`. It does not build llama.cpp.
 
 ---
 

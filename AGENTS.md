@@ -1,221 +1,108 @@
-# AGENTS.md - stfg Project Guide
+# AGENTS.md — stfg
 
-## Project Overview
+Index for working in this repository. Current code shape lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Non-obvious choices live in [docs/DECISIONS.md](docs/DECISIONS.md). Product goal lives in [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md) — do not rewrite that vision for a refactor. [docs/investigations/](docs/investigations/) and [docs/plans/](docs/plans/) are historical. Do not edit an investigation after it is written. Plans are not authoritative.
 
-**stfg (Shop The Flyers Grocer)** - CLI tool for searching grocery deals from flyers and stores.
+## What this is
 
-- **Language**: Go 1.26+
-- **Framework**: Cobra CLI
-- **Logging**: Zap (structured JSON + console)
-- **Config**: Viper (YAML, env vars, flags)
-- **Storage**: JSON files in OS cache dir
-- **Embeddings**: Hosted LLM via `provider.Provider.Embed` (OpenRouter with `openai/text-embedding-3-small` for `add-grocery`)
-- **Scraping**: Flipp API integration
+`stfg` is a Go CLI that stores a grocery list, scrapes Flipp flyers for a postal code, and asks an LLM which flyer rows match the list.
 
----
+- Language: Go 1.27 (`go.mod`)
+- CLI: Cobra, wired in `internal/bootstrap` (no command `init()`)
+- Config: Viper
+- Logging: Zap
+- Storage: `storage.StorageProvider` with JSON, SQLite, and Bolt backends. Commands look up `"json"`.
+- LLM: `provider.Provider` (OpenRouter, OpenAI, Ollama). Commands look up `"openrouter"`.
+- Flyers: `flyerfinder.FlyerFinder`, implemented by `internal/flyerfinder/flipp`
 
-## Quick Start
+## Layout
+
+```
+cmd/stfg/main.go                 # composition root: bootstrap, register, Execute
+internal/bootstrap/              # Cobra root, config, logging, provider registration, subcommand wiring
+internal/commands/               # one Cobra command constructor per file
+internal/container/              # string-keyed loader registry
+internal/storage/                # StorageProvider, DTOs, cache dir
+internal/storage/json|sqlite|bolt/
+internal/provider/               # Provider, match schema, OpenRouter/OpenAI/Ollama
+internal/embedding/              # GroceryEmbedder over Provider.Embed
+internal/promptwriter/           # match prompt, Send, validate returned rows
+internal/flyerfinder/            # FlyerFinder protocol + flipp client
+internal/reconciler/scrape/      # whitelist filter and flyer persistence
+docs/                            # living docs, investigations, plans
+```
+
+There is no root `main.go`, no `cmd/*.go` command package, and no `internal/flipp` or `internal/models` package.
+
+## Build and run
 
 ```bash
-# Build (fetches llama-go, builds llama.cpp, builds binary)
-make
-
-# Run commands
+make                  # go build -o ./bin/stfg cmd/stfg/main.go
+go test ./...
 ./bin/stfg groceries add-grocery milk
-./bin/stfg groceries list
+./bin/stfg groceries list-groceries
+./bin/stfg groceries remove-grocery milk
 ./bin/stfg scrape-flyers V5K0A1
 ./bin/stfg find-deals
 ```
 
----
-
-## Project Structure
-
-```
-stfg/
-├── main.go                 # Entry point → cmd.Execute()
-├── docs/                  # Living project documentation
-│   ├── ARCHITECTURE.md    # Code architecture: structure, diagrams, mermaidjs
-│   ├── DECISIONS.md       # Important decisions / deviations / memory notes
-│   ├── PROJECT_CONTEXT.md # Product vision & desired outcome (never edit)
-│   ├── investigations/    # Research / transcripts (never edit after written)
-│   └── plans/             # Archive of plan documents
-├── cmd/                    # Cobra commands
-│   ├── root.go            # Root command, config, logging setup
-│   ├── groceries.go       # Parent command for grocery ops
-│   ├── addGrocery.go      # Add item with embedding
-│   ├── listGroceries.go   # List all items
-│   ├── removeGrocery.go   # Remove item
-│   ├── scrapeFlyers.go    # Scrape flyers via Flipp API
-│   └── findDeals.go       # Match flyers to grocery list (semantic search)
-├── internal/
-│   ├── embedding/         # GroceryEmbedder: provider-backed vector generation
-│   ├── storage/           # JSON file persistence
-│   │   ├── db.go          # Low-level JSON save/load + cache dir
-│   │   ├── jsonfilestorage.go  # High-level Grocery/Flyer CRUD
-│   │   └── types.go       # Store, Flyer, FlyerItem, GroceryItem types
-│   ├── flipp/             # Flipp API client
-│   ├── reconciler/        # Flyer scraping & matching logic
-│   ├── provider/          # LLM providers (OpenAI, Ollama, and OpenRouter)
-│   └── promptwriter/      # Builds the match prompt and validates provider matches
-├── models/                # Downloaded GGUF models (gitignored)
-├── bin/                   # Built binary
-├── lib/                   # Compiled llama.cpp static libs
-├── res/llama-go/          # llama-go source + llama.cpp submodule
-└── Makefile               # Build orchestration
-```
-
----
-
-## Key Commands
-
-| Command | Description |
-|---------|-------------|
-| `make` | Full build: clone llama-go → build llama.cpp → build stfg |
-| `make clean` | Remove res/, lib/, bin/ |
-| `make run` | Run via `go run` (dev) |
-| `./bin/stfg groceries add-grocery <item>` | Add item (creates embedding) |
-| `./bin/stfg groceries list` | List all grocery items |
-| `./bin/stfg groceries remove-grocery <item>` | Remove item |
-| `./bin/stfg scrape-flyers <postal-code>` | Scrape flyers for area |
-| `./bin/stfg find-deals` | Match grocery list to flyer deals |
-
----
-
-## Build System Details
-
-### Makefile Flow
-1. Clones `tcpipuk/llama-go` with submodules
-2. Runs `git submodule update --init --recursive` in llama-go
-3. Builds `libbinding.a` with:
-    - `-DLLAMA_DISABLE_LOGS=1` (suppresses llama.cpp logs)
-    - `-I./llama.cpp/vendor/nlohmann` (nlohmann/json include path)
-4. Copies `*.a` to `lib/`
-5. `go build -o bin/stfg main.go` with `CGO_LDFLAGS="-Llib"`
-
-### Critical Flags
-- `LLAMA_DISABLE_LOGS=1`: Silences llama.cpp diagnostic output
-- `LLAMA_LOG=none`: Set in `models/client.go` init() as fallback
-- CGO needs `libggml`, `libllama`, `libbinding` from `lib/`
-
-### Ephemeral Directories
-- The `res/` and `lib/` directories are **ephemeral by design**
-- These directories are deleted by `make clean`
-- `res/` contains the llama-go source code and llama.cpp submodule
-- `lib/` contains the compiled llama.cpp static libraries
-- Do **not** make persistent changes to these directories as they will be deleted
-- For persistent changes to llama-go/llama.cpp, fork the repository and modify the Makefile to use your fork
-- The `models/` directory (for GGUF models) and `bin/` directory (for the built binary) are also cleaned by `make clean`
-
----
+Do not use `make run`. It still executes `go run main.go`, which no longer exists. Llama.cpp targets in the Makefile are commented out and are not part of the build.
 
 ## Configuration
 
-**Config file**: `~/.stfg.yaml` (or `--config` flag)
+Config file: `$HOME/.stfg.yaml`, or `--config`. Viper prefix is `STFG`. Dots and dashes in keys become underscores in env vars (`providers.openrouter.api_key` → `STFG_PROVIDERS_OPENROUTER_API_KEY`).
 
-**Env vars** (prefix `STFG_`):
-- `STFG_CONFIG` - config file path
-- `STFG_LOG_FILE` - log output file
-- `STFG_LOG_LEVEL` - log level (debug/info/warn/error)
-- `STFG_QUIET` - suppress console output
+Persistent flags, bound into Viper before config load: `--config`, `--log-file`, `--log-level` (default `info`), `--quiet`.
 
-**Flags**:
-- `--config` - config file
-- `--log-file` - log file path
-- `--log-level` - log level
-- `-q, --quiet` - mute console logs
+Defaults set in `internal/bootstrap/config.go`:
 
----
+| Key | Default |
+|-----|---------|
+| `fly_finder.whitelist` | Superstore, Thrifty Foods, Quality Foods, Buy-Low Foods, Country Grocer, No Frills, Pharmasave, Shoppers Drug Mart, Walmart, Nesters Market, Rexall |
+| `providers.openrouter.api_key` | empty; the OpenRouter loader fails if it stays empty |
+| `providers.openai.api_key` | empty |
+| `providers.ollama.host` | `http://localhost:11434` |
+| `storage.sqlite.sqlite_file_name` | `stfg.sqlite.db` |
+| `storage.bolt.bolt_file_name` | `stfg.bolt.db` |
 
-## Data Flow
+Empty `storage.sqlite.cache_dir` and `storage.bolt.cache_dir` fall back to `storage.CacheDir()` (`os.UserCacheDir()/stfg`, mode `0700`). JSON always uses that cache dir. Files: `groceries.json`, `flyers_index.json`, `flyer_<id>.json`.
 
-### Adding a Grocery Item
-1. `addGrocery` command → `storage.NewJSONFileStorage()`
-2. Checks `groceries.json` for duplicates (case-insensitive)
-3. Calls `GroceryEmbedder.CreateGroceryEmbedding(item)`:
-   - Resolves `api_key` from viper, falling back to the `--api-key` / `-a` flag
-   - Constructs `provider.NewOpenRouterProvider(apiKey)`
-   - Wraps the provider in `embedding.NewGroceryEmbedder(client, "openai/text-embedding-3-small")`
-   - Calls `Provider.Embed(ctx, item, model)` → `[]float32`
-4. Saves `GroceryItem{Name, Embedding}` to `groceries.json`
+Logs default to `stfg.log` in the process working directory (JSON). Console logs use a console encoder on the command's stderr unless `--quiet` is set. `SilenceErrors` and `SilenceUsage` are on. `main` prints one `error:` line to stderr and exits 1.
 
-### Scraping Flyers
-1. `scrape-flyers <postal-code>` → `flipp.NewClient()`
-2. Queries Flipp API for valid flyers near postal code
-3. Filters to whitelisted retailers (Superstore, Walmart, etc.)
-4. Stores flyers + items in JSON cache
+## How a run is wired
 
-### Finding Deals
-1. `find-deals` → loads groceries + flyers from storage
-2. Calls `NewOpenRouterProvider`, passes the client and `openrouter/free` to `NewPromptWriter`
-3. Matching still goes through `Provider.Send` and the decoded `[]GroceryFlyerMatch`; the writer validates matches against real flyer rows
-4. Outputs matched deals
+1. `bootstrap.BootstrapCobraRoot()` builds the root command and `PersistentPreRunE` (config, then logger, then `zap.ReplaceGlobals`).
+2. `bootstrap.RegisterProviders` builds a `container.ContainerRegistry` and registers storage keys `json`, `sqlite`, `bolt` and provider keys `openrouter`, `ollama`, `openai`. Loaders run on lookup, not at registration. Constructors return concrete types; the registry methods return the consumer interfaces.
+3. `bootstrap.RegisterSubCommands` passes that registry into command constructors. The registry is not stored on the Cobra context.
+4. Each command calls `GetStorage(ctx, "json")` and, when it needs a model, `GetProvider(ctx, "openrouter")`.
 
----
+## Command behavior
 
-## Key Dependencies
+`add-grocery` rejects a case-insensitive duplicate, embeds the name, and stores `GroceryItem`. The embedder model string is hardcoded in `internal/commands/addGrocery.go` as `nvidia/nemotron-3-embed-1b:free`.
 
-| Package | Purpose |
-|---------|---------|
-| `github.com/spf13/cobra` | CLI framework |
-| `github.com/spf13/viper` | Config management |
-| `go.uber.org/zap` | Structured logging |
-| `github.com/OpenRouterTeam/go-sdk` | LLM API (OpenRouter; used by `find-deals` and `add-grocery`) |
-| `github.com/openai/openai-go/v3` | LLM API (OpenAI; embeds `openai/text-embedding-3-small` via OpenRouter) |
-| `github.com/liliang-cn/ollama-go` | LLM API (Ollama) |
-| `github.com/h2non/gentleman` | HTTP client (Flipp API) |
-| `github.com/kaptinlin/jsonrepair` | JSON repair |
+`scrape-flyers` builds `flipp.NewFinder(nil)`, reads `fly_finder.whitelist`, and calls `scrape.Reconcile`. A flyer is kept when `merchant + " " + name` contains a whitelist entry. Expired flyers are pruned first. Existing flyer IDs are skipped.
 
----
+`find-deals` loads JSON groceries and flyers and calls `promptwriter.NewPromptWriter` with `openai/gpt-4.1-nano`. Matching is an LLM prompt, not a vector search. Stored embeddings are not read here. The prompt sends flyer `id`, `brand`, `name`, and `displayType` only. The writer retries up to three times when a returned match cannot be tied to a real flyer row and grocery name.
 
-## Common Issues & Fixes
-
-### Build Fails: `nlohmann/json_fwd.hpp` not found
-- Ensure Makefile uses `-I./llama.cpp/vendor/nlohmann` (not `3rdparty/json`)
-- Run `make clean && make` to force fresh clone + submodule init
-
-### llama.cpp Logs Spamming Output
-- Makefile includes `-DLLAMA_DISABLE_LOGS=1` in CFLAGS/CXXFLAGS
-- Use `--quiet` flag to also suppress stfg's own logs
-
-> Note: `tcpipuk/llama-go` is no longer imported by Go code. `make` still
-> builds llama.cpp because the Makefile is the documented build entrypoint;
-> the artifacts are unused by the current Go packages.
-
----
-
-## Documentation Index (`docs/`)
-
-| File | Purpose |
-|---|---|
-| `ARCHITECTURE.md` | Code architecture: structure, diagrams, mermaidjs (ephemeral - may change) |
-| `DECISIONS.md` | Important decisions / deviations / non-intuitive choices for future context |
-| `PROJECT_CONTEXT.md` | Product vision & desired outcome (never edit - represents where we're heading) |
-| `docs/investigations/` | Research / transcripts (never edit after written) |
-| `docs/plans/` | Archive of plan documents (not always 100% code-sync)
-
----
-
-## Development Notes
-
-- **No tests yet** - add via `go test ./...`
-- **Logger**: `zap.S()` for sugar, configured in `root.go:PersistentPreRunE`
-- **Cache dir**: `internal.CacheDir()` (OS-specific: `~/.cache/stfg` on Linux)
-- **Embeddings**: `GroceryEmbedder.CreateGroceryEmbedding` calls `Provider.Embed`; the model is fixed at `openai/text-embedding-3-small` for `add-grocery`. Vector length is whatever the model returns.
-
----
-
-## File Locations Quick Reference
+## Where to change things
 
 | Need | Location |
 |------|----------|
-| Add new CLI command | `cmd/newCommand.go` + register in `init()` |
-| Change the embedding model or provider used by `add-grocery` | `cmd/addGrocery.go` (model string) |
-| Change storage format | `internal/storage/jsonfilestorage.go` |
-| Add retailer to whitelist | `cmd/scrapeFlyers.go:validFlyers` |
-| Adjust llama.cpp build flags | `Makefile:15` (CFLAGS/CXXFLAGS) |
-| Config/logging setup | `cmd/root.go` |
-| Structured match types | `internal/provider/types.go` |
-| Match schema and decoder | `internal/provider/utils.go` |
-| Prompt writer type | `internal/promptwriter/prompt_writer.go` |
-| Grocery embedding entry point | `internal/embedding/grocery_embedder.go` |
+| Add a command | `internal/commands/`, then `internal/bootstrap/commands.go` |
+| Register a storage or LLM backend | `internal/bootstrap/providers.go` |
+| Select which backend a command uses | the `GetStorage` / `GetProvider` key in that command |
+| Embedding or match model string | `internal/commands/addGrocery.go`, `internal/commands/findDeals.go` |
+| Match schema and decode | `internal/provider/types.go`, `internal/provider/utils.go` |
+| Prompt text and match checks | `internal/promptwriter/prompt_writer.go` |
+| Retailer whitelist default | `internal/bootstrap/config.go` (`fly_finder.whitelist`) |
+| Flipp HTTP calls | `internal/flyerfinder/flipp/` |
+| Cache directory | `internal/storage/utils.go` |
+
+## Docs map
+
+| Path | Role |
+|------|------|
+| `docs/ARCHITECTURE.md` | Current structure and flow. Update when the code moves. |
+| `docs/DECISIONS.md` | Choices that are hard to see from the code. |
+| `docs/PROJECT_CONTEXT.md` | Product goal. Do not turn it into a changelog. |
+| `docs/investigations/` | Past research. Leave it after it is written. |
+| `docs/plans/` | Archived plans. Not a guarantee of what shipped. |
