@@ -1,68 +1,99 @@
 # Architecture
 
+Snapshot of how `stfg` is organized today. Product direction is in [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md). Tradeoffs are in [DECISIONS.md](DECISIONS.md).
+
 ## Overview
 
-`stfg` is a CLI tool for searching the best deals on groceries from flyers and stores. It's built as a Go application using the Cobra framework for command-line interface management.
+`stfg` is a single-process Cobra CLI. `cmd/stfg/main.go` is only the composition root. It builds the root command, registers storage and LLM loaders on a container, attaches subcommands, and calls `Execute`.
 
-## Core Components
-
-### CLI Framework
-- **Cobra** – Used for building the command structure, subcommands, and global configuration.
-- Global flags: `--config` (config file path), `--log-file` (log destination), `--log-level` (debug/info/warn/error), `--quiet` (suppress stdout/stderr).
-- Persistent pre-run hook initializes logging and storage.
-
-### Storage Layer
-Three storage backends are supported:
-- **JSON File Storage** – Primary implementation using `stfg/internal/storage/json/jsonfilestorage`. Files are cached in the OS cache directory (`~/.cache/stfg`). Provides human-readable persistence for grocery lists and flyer data.
-- **SQLite Backend** – Relational storage for structured queries (flyer metadata, grocery items).
-- **BoltDB Backend** – High-performance key-value storage for fast lookups.
-
-All storage handles are injected via Cobra context so subcommands can retrieve them consistently.
-
-### Models
-- **GroceryItem** – Contains name and embedding vector. The vector is produced by `GroceryEmbedder` in `internal/embedding`, which calls `Provider.Embed`.
-- **FlyerFinder** – Interfaces with the Flipp API to parse and categorize flyers.
-- **Reconciler** – Matches flyer items against the user's grocery list.
-- **PromptWriter** – One `PromptWriter` in `internal/promptwriter/prompt_writer.go` takes a `provider.Provider` and a model name, builds the flyer/grocery prompt, calls `Provider.Send`, and checks the returned matches against the real `storage.FlyerItem` rows.
-
-### Providers
-- **OpenAI, Ollama, and OpenRouter** – Implementations of `internal/provider.Provider`. `Send` returns `[]GroceryFlyerMatch` decoded from a shared `{"matches":[...]}` JSON schema. The three providers also implement `Embed`, which returns one `[]float32` vector for one text input.
-- **Flipp API** – Source for retail flyers; parsed by the `Flipp` client.
-
-### Data Flow
-1. **Add Grocery** – User adds an item; `add-grocery` constructs `NewOpenRouterProvider` from `api_key` / `--api-key` and passes that provider plus `openai/text-embedding-3-small` to `NewGroceryEmbedder`. The embedder calls `Provider.Embed` and stores the returned vector in the chosen storage backend. It does not select among providers.
-2. **Scrape Flyers** – The `scrape-flyers` command queries the Flipp API for flyers in a given postal code, filters by a whitelist of retailers, and stores them.
-3. **Find Deals** – The `find-deals` command loads all groceries and flyers, constructs `NewOpenRouterProvider`, and passes that provider plus `openrouter/free` to `NewPromptWriter`. The prompt writer calls `Provider.Send` and produces a ranked list of deals.
-
-## Directory Structure
-
-```
-stfg/
-├── cmd/              # Cobra commands (groceries, add-grocery, list, remove, scrape-flyers, find-deals)
-├── internal/
-│   ├── embedding/   # GroceryEmbedder: provider-backed vector generation
-│   ├── storage/     # Storage DTOs and backends (JSON, SQLite, BoltDB)
-│   ├── flyerfinder/ # Flipp API integration
-│   ├── reconciler/  # Flyer matching logic
-│   ├── provider/    # OpenAI, Ollama, and OpenRouter LLM providers
-│   └── promptwriter/ # Prompt writer over any Provider
-├── docs/            # Documentation (ARCHITECTURE.md, DECISIONS.md, PROJECT_CONTEXT.md)
-├── main.go          # Entry point (invokes root.Execute())
-└── Makefile         # Build orchestration
+```mermaid
+flowchart TD
+    main["cmd/stfg/main.go"] --> root["bootstrap.BootstrapCobraRoot"]
+    main --> reg["bootstrap.RegisterProviders"]
+    main --> cmds["bootstrap.RegisterSubCommands"]
+    root --> pre["PersistentPreRunE: config + zap"]
+    reg --> container["container.ContainerRegistry"]
+    cmds --> commands["internal/commands"]
+    commands --> container
+    commands --> json["storage key json"]
+    commands --> or["provider key openrouter"]
+    commands --> embed["embedding.GroceryEmbedder"]
+    commands --> prompt["promptwriter.PromptWriter"]
+    commands --> scrape["reconciler/scrape.Reconcile"]
+    scrape --> flipp["flyerfinder/flipp.Client"]
+    scrape --> json
+    embed --> or
+    prompt --> or
 ```
 
-## Design Principles
+## Composition
 
-- **Separation of Concerns** – Each component (storage, models, providers) is isolated behind interfaces.
-- **Testability** – All major components are unit-testable (e.g., `test(storage): ...`).
-- **Extensibility** – New storage backends or providers can be added by implementing the common interfaces.
-- **Configuration** – Centralized via Viper (YAML config file, environment variables, and CLI flags).
+`BootstrapCobraRoot` sets `SilenceErrors` and `SilenceUsage`. `PersistentPreRunE` calls `SetupConfiguration`, then `SetUpLogger`, then `zap.ReplaceGlobals`. It does not open storage or put the registry on the command context.
 
-## Technology Stack
+`RegisterProviders` stores loader functions. `GetStorage` and `GetProvider` invoke the loader for that call. Registered keys:
 
-- **Language** – Go 1.26+
-- **CLI Framework** – Cobra
-- **Logging** – Zap (structured JSON + console)
-- **Serialization** – `github.com/spf13/viper` (config); embeddings are produced by hosted LLM providers via `Provider.Embed`
-- **Database** – JSON file (default), SQLite, BoltDB
-- **External Services** – Flipp API (retail flyers), OpenAI, Ollama, and OpenRouter (LLM)
+- storage: `json`, `sqlite`, `bolt`
+- provider: `openrouter`, `ollama`, `openai`
+
+Command constructors in `internal/commands` receive `*container.ContainerRegistry`. `RegisterSubCommands` attaches `scrape-flyers` and `find-deals` to the root, and `add-grocery`, `remove-grocery`, and `list-groceries` under `groceries`.
+
+## Storage
+
+`storage.StorageProvider` in `internal/storage/protocols.go` is the persistence contract: groceries, flyers, flyer items, `Migrate`, `Close`, and `PruneExpired`. DTOs are in `internal/storage/types.go`.
+
+`storage.CacheDir()` is `os.UserCacheDir()/stfg`.
+
+| Backend | Constructor | On disk |
+|---------|-------------|---------|
+| JSON | `json.NewJSON` | `groceries.json`, `flyers_index.json`, `flyer_<id>.json` in the cache dir |
+| SQLite | `sqlite.NewSQLite` | `stfg.sqlite.db` unless `storage.sqlite.sqlite_file_name` is set |
+| Bolt | `bolt.NewBolt` | `stfg.bolt.db` unless `storage.bolt.bolt_file_name` is set |
+
+Commands pass `"json"`. The other backends are registered and tested, but no command selects them.
+
+Grocery names are matched with `storage.NormalizeName` (`strings.ToLower`), not `strings.EqualFold`.
+
+## Providers
+
+`provider.Provider` has `Send` and `Embed`. `Send` returns `[]GroceryFlyerMatch` decoded from `{"matches":[...]}`. Schema and decode live in `internal/provider/utils.go`.
+
+OpenRouter is constructed with the configured API key and a 3-minute client timeout. `Send` sets `RequireParameters`. OpenAI and Ollama implement the same interface and are registered, but no command looks them up.
+
+## Flyer scrape
+
+`scrape-flyers` does not call Flipp itself. It passes `flipp.NewFinder` and the JSON store to `scrape.Reconcile`.
+
+`Reconcile` prunes expired flyers, loads flyers for the postal code, and keeps a flyer only when `Merchant + " " + Name` contains a `fly_finder.whitelist` entry. New flyers and their items are inserted. Existing flyer IDs are left alone.
+
+`flipp.Client` uses gentleman. `FindFlyers` and `FindFlyerItems` satisfy `flyerfinder.FlyerFinder`.
+
+## Embeddings and deal matching
+
+`add-grocery` looks up OpenRouter, wraps it in `embedding.NewGroceryEmbedder` with model `nvidia/nemotron-3-embed-1b:free`, and stores the returned `[]float32` on `GroceryItem`. The embedder does not choose a provider or a model.
+
+`find-deals` does not compare those vectors. It loads flyer items and grocery names and calls `PromptWriter.GetFlyerItemsOnGroceryList` with model `openai/gpt-4.1-nano`. The prompt payload is `id`, `brand`, `name`, and `displayType`. Returned matches must reference a real flyer row (`id` and `name`) and a grocery name from the input. Up to three attempts are made. Failures for one flyer are logged and the loop continues. Matches are printed to stdout.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Find as find-deals
+    participant Store as JSON storage
+    participant Writer as PromptWriter
+    participant LLM as OpenRouter
+    User->>Find: find-deals
+    Find->>Store: ListFlyers / ListGroceries / ListFlyerItems
+    Find->>Writer: GetFlyerItemsOnGroceryList
+    Writer->>LLM: Send(prompt, openai/gpt-4.1-nano)
+    LLM-->>Writer: []GroceryFlyerMatch
+    Writer->>Writer: keep only rows that exist in the inputs
+    Writer-->>Find: map[groceryName][]FlyerItem
+    Find-->>User: stdout
+```
+
+## Logging and process exit
+
+File logs are JSON, default path `stfg.log` in the working directory. Console logs go to the command stderr unless `--quiet` is set. Library and command code return errors. `main` writes one stderr line and exits 1. Command output uses `cmd.OutOrStdout()`.
+
+## Tests
+
+Tests are `*_test.go` next to the packages they cover, including storage parity across JSON, SQLite, and Bolt. Run `go test ./...`.
