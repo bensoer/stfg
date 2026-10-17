@@ -27,7 +27,7 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 	return &cobra.Command{
 		Use:   "find-deals",
 		Short: "Find deals in flyers matching your grocery list",
-		Long:  `Search through downloaded flyers to find items from your grocery list that are on sale. Each flyer item is embedded from brand and name and dropped unless it is at least 60% cosine-similar to a stored grocery embedding; the remaining items are still matched by the model.`,
+		Long:  `Search through downloaded flyers to find items from your grocery list that are on sale.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
