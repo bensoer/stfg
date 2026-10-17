@@ -45,7 +45,6 @@ func (p *PromptWriter) GetFlyerItemsOnGroceryList(ctx context.Context, flyerItem
 			"brand":       flyerItem.Brand,
 			"name":        flyerItem.Name,
 			"displayType": flyerItem.DisplayType,
-			"imgURL":      flyerItem.ImageURL,
 		})
 	}
 

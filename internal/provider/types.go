@@ -1,5 +1,7 @@
 package provider
 
+import "time"
+
 // GroceryFlyerMatch is one grocery list item matched to one flyer item.
 // You are a helpful shopping assistant. Below is a store flyer and a list of groceries the user wants to buy.
 
@@ -22,7 +24,8 @@ type OllamaOptions struct {
 }
 
 type OpenRouterOptions struct {
-	APIKey string `json:"api_key,omitempty"` // OpenRouter API key
+	APIKey  string        `json:"api_key,omitempty"`
+	Timeout time.Duration // OpenRouter API key
 }
 
 type OpenAIOptions struct {

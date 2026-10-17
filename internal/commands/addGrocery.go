@@ -43,7 +43,7 @@ func AddGroceryCmd(container *container.ContainerRegistry) *cobra.Command {
 
 			zap.S().Info("Getting Embedding Value For Grocery")
 
-			embedder, err := embedding.NewGroceryEmbedder(provider, "openai/text-embedding-3-small")
+			embedder, err := embedding.NewGroceryEmbedder(provider, "nvidia/nemotron-3-embed-1b:free")
 			if err != nil {
 				return fmt.Errorf("Failed To Create Grocery Embedding Data: %w", err)
 			}

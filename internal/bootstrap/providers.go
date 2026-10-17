@@ -9,22 +9,21 @@ import (
 	"stfg/internal/storage/bolt"
 	"stfg/internal/storage/json"
 	"stfg/internal/storage/sqlite"
+	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"go.uber.org/zap"
 )
 
 // registryCtxKey is the context key for the container registry.
-type registryCtxKey struct{}
+// type registryCtxKey struct{}
 
-func GetContainer(cmd *cobra.Command) *container.ContainerRegistry {
-	reg, ok := cmd.Context().Value(registryCtxKey{}).(*container.ContainerRegistry)
-	if ok && reg != nil {
-		return reg
-	}
-	return nil
-}
+// func GetContainer(cmd *cobra.Command) *container.ContainerRegistry {
+// 	reg, ok := cmd.Context().Value(registryCtxKey{}).(*container.ContainerRegistry)
+// 	if ok && reg != nil {
+// 		return reg
+// 	}
+// 	return nil
+// }
 
 // getStore retrieves the storage.Storage handle from the cobra command context.
 // The storage handle is set by the root command's PersistentPreRunE, so every
@@ -56,9 +55,9 @@ func RegisterProviders(ctx context.Context) *container.ContainerRegistry {
 		if apiKey == "" {
 			return nil, fmt.Errorf("openrouter API key is not set. Please set it in the config file or via the environment variable STFG_PROVIDERS_OPENROUTER_API_KEY")
 		}
-		zap.S().Info("Using OpenRouter API Key: ", apiKey)
 		return provider.NewOpenRouterProvider(provider.OpenRouterOptions{
-			APIKey: viper.GetString("providers.openrouter.api_key"),
+			APIKey:  viper.GetString("providers.openrouter.api_key"),
+			Timeout: (3 * time.Minute), // Set a default timeout of 30 seconds
 		})
 	})
 	reg.RegisterProviderProvider(ctx, "ollama", func(c context.Context) (provider.Provider, error) {
