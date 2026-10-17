@@ -2,7 +2,6 @@ package scrape
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,13 +11,6 @@ import (
 
 	"go.uber.org/zap"
 )
-
-// errEmbedderMissing is returned when Reconcile is called without an
-// Embedder on the options struct. The reconciler needs the embedder to
-// write flyer-item vectors that find-deals later compares against grocery
-// embeddings; running without it would silently persist items with no
-// vector, which find-deals then surfaces as an error per item.
-var errEmbedderMissing = errors.New("scrape: embedder is required on ScrapeReconcilerOptions")
 
 func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storage.StorageProvider, options ScrapeReconcilerOptions) error {
 	log := zap.S()
