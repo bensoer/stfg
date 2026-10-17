@@ -28,6 +28,13 @@ func NewOpenAIProvider(opts OpenAIOptions) (*OpenAIProvider, error) {
 
 // Send sends a prompt to the underlying model and returns the raw response as a string.
 func (op *OpenAIProvider) Send(ctx context.Context, prompt string, model string) ([]GroceryFlyerMatch, error) {
+	if prompt == "" {
+		return nil, &ValidationError{Provider: "openai", Field: "prompt", Msg: "empty"}
+	}
+	if model == "" {
+		return nil, &ValidationError{Provider: "openai", Field: "model", Msg: "empty"}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 
