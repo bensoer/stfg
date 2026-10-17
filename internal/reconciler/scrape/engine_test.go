@@ -384,69 +384,9 @@ func TestReconcile_TextChange_Reembed(t *testing.T) {
 	}
 }
 
-func TestReconcile_PriceOnlyChange_NoEmbed_UpdatePrice(t *testing.T) {
-	embedder := &fakeEmbedder{}
-	store := &mockStore{}
-	runReconcile(t, store, []storage.FlyerItem{
-		{ID: 1, FlyerID: 10, Name: "Milk 2L", Brand: "Dairy", Price: "$1.00"},
-	}, embedder)
-	originalEmbedding, _ := store.ListFlyerItems(context.Background(), 10)
-	if len(originalEmbedding) != 1 {
-		t.Fatalf("expected 1 stored item, got %d", len(originalEmbedding))
-	}
-	original := originalEmbedding[0].Embedding
-	calls := len(embedder.calls)
-
-	runReconcile(t, store, []storage.FlyerItem{
-		{ID: 1, FlyerID: 10, Name: "Milk 2L", Brand: "Dairy", Price: "$2.00"}, // price-only
-	}, embedder)
-	if len(embedder.calls)-calls != 0 {
-		t.Fatalf("price-only change must not embed; got %d extra calls", len(embedder.calls)-calls)
-	}
-	after, _ := store.ListFlyerItems(context.Background(), 10)
-	if after[0].Price != "$2.00" {
-		t.Fatalf("price not updated: %q", after[0].Price)
-	}
-	if !equalFloat32(after[0].Embedding, original) {
-		t.Fatalf("embedding changed on price-only update: before=%v after=%v", original, after[0].Embedding)
-	}
-}
-
-func TestReconcile_ExistingItemWithEmptyEmbedding_Backfills(t *testing.T) {
-	// Seed a flyer with an item whose embedding is nil, then reconcile a new
-	// scrape and confirm the reconciler embeds and updates it.
-	mock := &MockFinder{
-		FindFlyersFunc: func(s string) ([]storage.Flyer, error) {
-			return []storage.Flyer{validFlyer(10)}, nil
-		},
-		FindFlyerItemsFunc: func(id int64) ([]storage.FlyerItem, error) {
-			return []storage.FlyerItem{{ID: 1, FlyerID: 10, Name: "Milk 2L", Brand: "Dairy"}}, nil
-		},
-	}
-	store := &mockStore{
-		flyers: []storage.Flyer{validFlyer(10)},
-		items: map[int64][]storage.FlyerItem{
-			10: {{ID: 1, FlyerID: 10, Name: "Milk 2L", Brand: "Dairy"}},
-		},
-	}
-	embedder := &fakeEmbedder{}
-	if err := Reconcile(context.Background(), mock, store, ScrapeReconcilerOptions{
-		PostalCode:           "12345",
-		RetailGroupWhiteList: []string{"Test"},
-		Embedder:             embedder,
-	}); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
-	if len(embedder.calls) != 1 || embedder.calls[0] != "Dairy Milk 2L" {
-		t.Fatalf("expected 1 embed call with trimmed text, got %v", embedder.calls)
-	}
-	stored, _ := store.ListFlyerItems(context.Background(), 10)
-	if !equalFloat32(stored[0].Embedding, []float32{0.1, 0.2, 0.3}) {
-		t.Fatalf("expected backfilled fake vector, got %v", stored[0].Embedding)
-	}
-}
-
-func TestReconcile_EmptyBrandAndName_NoEmbed_NilEmbedding(t *testing.T) {
+func TestReconcile_EmptyBrandAndName_NotStored(t *testing.T) {
+	// Items with empty brand and name are unidentifiable for matching and
+	// have no embedding text; drop them before any I/O.
 	embedder := &fakeEmbedder{}
 	store := &mockStore{}
 	runReconcile(t, store, []storage.FlyerItem{
@@ -456,11 +396,8 @@ func TestReconcile_EmptyBrandAndName_NoEmbed_NilEmbedding(t *testing.T) {
 		t.Fatalf("expected zero embed calls for empty brand+name, got %d", len(embedder.calls))
 	}
 	stored, _ := store.ListFlyerItems(context.Background(), 10)
-	if len(stored) != 1 {
-		t.Fatalf("expected 1 stored item, got %d", len(stored))
-	}
-	if stored[0].Embedding != nil {
-		t.Fatalf("expected nil embedding for empty text, got %v", stored[0].Embedding)
+	if len(stored) != 0 {
+		t.Fatalf("empty-text items must not be stored; got %d items", len(stored))
 	}
 }
 
@@ -552,4 +489,18 @@ func TestReconcile_NilEmbedder_Errors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for nil embedder, got nil")
 	}
+}
+
+// equalFloat32 reports element-wise equality of two float32 slices. It is a
+// local helper for the reconciler tests; production code does not need it.
+func equalFloat32(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

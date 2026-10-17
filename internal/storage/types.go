@@ -32,8 +32,7 @@ type FlyerItem struct {
 	// Embedding is the float32 vector for `strings.TrimSpace(Brand + " " + Name)`
 	// produced by `internal/embedding.GroceryEmbedder` at scrape time. It is
 	// stored so that `find-deals` can compare flyer items against the user's
-	// grocery embeddings without re-embedding the same text every run. nil
-	// means the item was never embedded (or had an empty embedding text).
+	// grocery embeddings without re-embedding the same text every run.
 	Embedding []float32 `json:"embedding,omitempty"`
 
 	// DisplayType is preserved from the Flipp API for the prompt-writer, which

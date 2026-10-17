@@ -188,42 +188,6 @@ func (s *SQLiteStorage) Migrate(ctx context.Context) error {
 		}
 	}
 
-	// Upgrade legacy DBs whose flyer_items table lacks the embedding column.
-	// Mirrors the groceries display_name upgrade above: PRAGMA table_info,
-	// ALTER TABLE if missing, no backfill (existing rows are unknown in the
-	// new coordinate space and are surfaced as nil embeddings for find-deals
-	// to error on).
-	itemColumns, err := tx.QueryContext(ctx, "PRAGMA table_info(flyer_items)")
-	if err != nil {
-		return fmt.Errorf("sqlite: query flyer_items columns: %w", err)
-	}
-	defer itemColumns.Close()
-	var hasEmbedding bool
-	for itemColumns.Next() {
-		var (
-			cid       int
-			colName   string
-			colType   string
-			notnull   int
-			dfltValue sql.NullString
-			pk        int
-		)
-		if err := itemColumns.Scan(&cid, &colName, &colType, &notnull, &dfltValue, &pk); err != nil {
-			return fmt.Errorf("sqlite: scan flyer_items column info: %w", err)
-		}
-		if colName == "embedding" {
-			hasEmbedding = true
-		}
-	}
-	if err := itemColumns.Err(); err != nil {
-		return fmt.Errorf("sqlite: iterate flyer_items columns: %w", err)
-	}
-	if !hasEmbedding {
-		if _, err := tx.ExecContext(ctx, "ALTER TABLE flyer_items ADD COLUMN embedding BLOB NOT NULL DEFAULT x''"); err != nil {
-			return fmt.Errorf("sqlite: add embedding column: %w", err)
-		}
-	}
-
 	// Check whether a schema version has already been recorded.
 	var version sql.NullInt64
 	if err := tx.QueryRowContext(ctx, "SELECT MAX(version) FROM schema_version").Scan(&version); err != nil {

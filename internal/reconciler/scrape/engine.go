@@ -84,12 +84,14 @@ func reconcileFlyer(ctx context.Context, store storage.StorageProvider, flyer st
 }
 
 // reconcileFlyerItems upserts each scraped item against the rows already
-// stored for flyerID. New items get an embedding; existing items get a fresh
-// embedding only when the text changed (brand or name), the price, value, or
-// any of the persisted media/display fields. Price-only changes do not call
-// the embedder. Unchanged items are skipped entirely. Already-written rows
-// stay on disk when the embed call fails — the next scrape will backfill
-// their embeddings.
+// stored for flyerID. New items are embedded and inserted; existing items
+// are re-embedded and rewritten only when the brand-plus-name text differs
+// from what is stored. Items are treated as immutable inside a flyer's
+// validity window, so the text-differs path is the only re-embed trigger in
+// practice — it covers the embedding-model-changed scenario after the
+// operator wipes storage and re-scrapes. Items with empty brand and name are
+// dropped before any I/O. An embed error aborts the scrape; already-written
+// rows stay on disk.
 func reconcileFlyerItems(
 	ctx context.Context,
 	store storage.StorageProvider,
@@ -111,93 +113,43 @@ func reconcileFlyerItems(
 	var embeddedCount int
 	for _, item := range scraped {
 		text := strings.TrimSpace(item.Brand + " " + item.Name)
-		existing, existed := byID[item.ID]
+		if text == "" {
+			continue
+		}
 
+		existing, existed := byID[item.ID]
 		if !existed {
-			// New item: persist a nil embedding when the text is empty
-			// (find-deals skips such items silently); otherwise embed once
-			// and store the vector.
-			if text != "" {
-				embedding, err := embedder.CreateGroceryEmbedding(ctx, text)
-				if err != nil {
-					return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
-				}
-				item.Embedding = embedding
-				embeddedCount++
+			embedding, err := embedder.CreateGroceryEmbedding(ctx, text)
+			if err != nil {
+				return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
 			}
+			item.Embedding = embedding
 			if err := store.AddFlyerItem(ctx, item); err != nil {
 				return err
 			}
+			embeddedCount++
 			continue
 		}
 
 		storedText := strings.TrimSpace(existing.Brand + " " + existing.Name)
-		needsEmbedding := len(existing.Embedding) == 0 || storedText != text
-		var embedding []float32
-		switch {
-		case needsEmbedding && text == "":
-			// Empty text: keep the slot unembedded so find-deals knows to
-			// skip this item without erroring.
-		case needsEmbedding:
-			embedding, err = embedder.CreateGroceryEmbedding(ctx, text)
-			if err != nil {
-				return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
-			}
-			embeddedCount++
-		default:
-			embedding = existing.Embedding
-		}
-
-		if !itemChanged(existing, item, embedding) {
+		if storedText == text {
 			continue
+		}
+		embedding, err := embedder.CreateGroceryEmbedding(ctx, text)
+		if err != nil {
+			return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
 		}
 		item.Embedding = embedding
 		if err := store.UpdateFlyerItem(ctx, item); err != nil {
 			return err
 		}
+		embeddedCount++
 	}
 
 	if embeddedCount > 0 {
 		log.Infof("Flyer %d: embedded %d items", flyerID, embeddedCount)
 	}
 	return nil
-}
-
-// itemChanged reports whether item differs from existing on any column that
-// UpdateFlyerItem persists. Price-only changes must trigger an update but
-// must not trigger an embed (the caller already gates embedding separately).
-func itemChanged(existing, item storage.FlyerItem, embedding []float32) bool {
-	if existing.Name != item.Name {
-		return true
-	}
-	if existing.Brand != item.Brand {
-		return true
-	}
-	if existing.Price != item.Price {
-		return true
-	}
-	if existing.ImageURL != item.ImageURL {
-		return true
-	}
-	if existing.VideoURL != item.VideoURL {
-		return true
-	}
-	if existing.DisplayType != item.DisplayType {
-		return true
-	}
-	return !equalFloat32(existing.Embedding, embedding)
-}
-
-func equalFloat32(a, b []float32) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // FlyerIsValid checks whether a flyer's validity window contains the current time.
