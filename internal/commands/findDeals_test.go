@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"stfg/internal/cosinecompare"
@@ -59,59 +58,12 @@ func TestPrefilter_DropsDissimilarStoredPair(t *testing.T) {
 	}
 }
 
-// TestPrefilter_EmptyFlyerText_SkipsWithoutError verifies that an item
-// whose brand and name are both blank is skipped silently — there is no
-// text to compare against and no stored embedding to use.
-func TestPrefilter_EmptyFlyerText_SkipsWithoutError(t *testing.T) {
-	comparer, err := cosinecompare.NewCosineCompare(cosinecompare.DefaultSimilarityPercent)
-	if err != nil {
-		t.Fatalf("NewCosineCompare: %v", err)
-	}
-	groceries := []storage.GroceryItem{
-		{Name: "milk", Embedding: []float32{1.0, 0.0, 0.0}},
-	}
-	items := []storage.FlyerItem{
-		{ID: 1, FlyerID: 10, Name: "", Brand: ""},
-	}
-	got, err := prefilterFlyerItemsBySimilarity(context.Background(), comparer, groceries, items)
-	if err != nil {
-		t.Fatalf("prefilter: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("kept = %+v, want empty", got)
-	}
-}
-
-// TestPrefilter_NonEmptyTextMissingEmbedding_Errors verifies that a flyer
-// item with a brand or name but no stored embedding surfaces as an error
-// naming the flyer item id; the user is told to re-run scrape-flyers.
-func TestPrefilter_NonEmptyTextMissingEmbedding_Errors(t *testing.T) {
-	comparer, err := cosinecompare.NewCosineCompare(cosinecompare.DefaultSimilarityPercent)
-	if err != nil {
-		t.Fatalf("NewCosineCompare: %v", err)
-	}
-	groceries := []storage.GroceryItem{
-		{Name: "milk", Embedding: []float32{1.0, 0.0, 0.0}},
-	}
-	items := []storage.FlyerItem{
-		{ID: 7, FlyerID: 10, Name: "milk"},
-	}
-	_, err = prefilterFlyerItemsBySimilarity(context.Background(), comparer, groceries, items)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !strings.Contains(err.Error(), "7") {
-		t.Fatalf("error %q does not name flyer item id 7", err.Error())
-	}
-	if !strings.Contains(err.Error(), "scrape-flyers") {
-		t.Fatalf("error %q does not mention re-running scrape-flyers", err.Error())
-	}
-}
-
 // TestPrefilter_LengthMismatch_ReturnsErr verifies that an embedding-length
 // mismatch surfaces as a wrapped error so the user re-adds groceries and
 // re-scrapes. We trigger it by giving a flyer item a different-length
-// embedding than the grocery.
+// embedding than the grocery — the only failure path the prefilter has
+// under the "clean data" model where every stored item carries an
+// embedding.
 func TestPrefilter_LengthMismatch_ReturnsErr(t *testing.T) {
 	comparer, err := cosinecompare.NewCosineCompare(cosinecompare.DefaultSimilarityPercent)
 	if err != nil {

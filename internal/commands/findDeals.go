@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -58,17 +57,8 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 			// find-deals is a compare step, not an embedding step. Both the
 			// grocery and the flyer-item vectors come from storage: groceries
 			// were embedded when the user ran `groceries add-grocery`, and
-			// flyer items were embedded when the user ran `scrape-flyers`. If
-			// either side is missing, the run stops with a remediation
-			// message; we never re-embed here.
-			goodGroceries := make([]storage.GroceryItem, 0, len(groceries))
-			for _, g := range groceries {
-				if len(g.Embedding) == 0 {
-					return fmt.Errorf("grocery %q has no embedding stored; re-add it with `groceries add-grocery` to generate one", g.Name)
-				}
-				goodGroceries = append(goodGroceries, g)
-			}
-
+			// flyer items were embedded when the user ran `scrape-flyers`. We
+			// never re-embed here.
 			comparer, err := cosinecompare.NewCosineCompare(cosinecompare.DefaultSimilarityPercent)
 			if err != nil {
 				return fmt.Errorf("find deals: create cosine compare: %w", err)
@@ -93,7 +83,7 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 					continue
 				}
 
-				filteredItems, err := prefilterFlyerItemsBySimilarity(ctx, comparer, goodGroceries, flyerItems)
+				filteredItems, err := prefilterFlyerItemsBySimilarity(ctx, comparer, groceries, flyerItems)
 				if err != nil {
 					return err
 				}
@@ -140,9 +130,10 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 // prefilterFlyerItemsBySimilarity keeps only flyer items whose stored
 // brand-plus-name embedding is at least as cosine-similar to any stored
 // grocery embedding as comparer requires. Both vectors come from storage
-// (no embedder argument). Items with empty embedding text are skipped
-// without error; items with non-empty text but a missing stored embedding
-// return an error so the user can re-run scrape-flyers.
+// (no embedder argument). Every stored flyer item carries an embedding;
+// the only failure path is an `AreCosineSimilar` length mismatch, which
+// surfaces when the embedding model was changed without wiping storage
+// first, and tells the user to re-add groceries and re-scrape.
 func prefilterFlyerItemsBySimilarity(
 	ctx context.Context,
 	comparer *cosinecompare.CosineCompare,
@@ -151,13 +142,6 @@ func prefilterFlyerItemsBySimilarity(
 ) ([]storage.FlyerItem, error) {
 	kept := make([]storage.FlyerItem, 0, len(items))
 	for _, item := range items {
-		text := strings.TrimSpace(item.Brand + " " + item.Name)
-		if text == "" {
-			continue
-		}
-		if len(item.Embedding) == 0 {
-			return nil, fmt.Errorf("flyer item %d has non-empty text %q but no stored embedding; re-run `scrape-flyers` to backfill", item.ID, text)
-		}
 		similar := false
 		for _, g := range groceries {
 			ok, err := comparer.AreCosineSimilar(item.Embedding, g.Embedding)
