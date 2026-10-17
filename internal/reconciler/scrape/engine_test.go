@@ -14,6 +14,14 @@ type MockFinder struct {
 	FindFlyerItemsFunc func(flyerID int64) ([]storage.FlyerItem, error)
 }
 
+// nopEmbedder is a minimal Embedder that returns an empty slice. It is used
+// by the existing Reconcile tests that do not exercise the embedding path.
+type nopEmbedder struct{}
+
+func (nopEmbedder) CreateGroceryEmbedding(ctx context.Context, text string) ([]float32, error) {
+	return []float32{}, nil
+}
+
 func (m *MockFinder) FindFlyers(postalCode string) ([]storage.Flyer, error) {
 	if m.FindFlyersFunc != nil {
 		return m.FindFlyersFunc(postalCode)
@@ -154,6 +162,7 @@ func TestReconcile_AcceptsAnyFlyerFinder(t *testing.T) {
 	opts := ScrapeReconcilerOptions{
 		PostalCode:           "12345",
 		RetailGroupWhiteList: []string{},
+		Embedder:             nopEmbedder{},
 	}
 	if err := Reconcile(context.Background(), mock, store, opts); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)
@@ -226,6 +235,7 @@ func TestReconcile_EmptyWhitelist(t *testing.T) {
 	opts := ScrapeReconcilerOptions{
 		PostalCode:           "12345",
 		RetailGroupWhiteList: []string{},
+		Embedder:             nopEmbedder{},
 	}
 	if err := Reconcile(context.Background(), mock, store, opts); err != nil {
 		t.Fatalf("Reconcile returned error: %v", err)

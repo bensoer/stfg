@@ -15,12 +15,6 @@ import (
 	"stfg/internal/storage"
 )
 
-// groceryEmbeddingModel is the model string used to embed flyer items for
-// cosine-similarity prefiltering. It must match the model used in
-// internal/commands/addGrocery.go so stored grocery embeddings and the
-// freshly-embedded flyer vectors live in the same coordinate space.
-const groceryEmbeddingModel = "nvidia/nemotron-3-embed-1b:free"
-
 func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 
 	// FindDealsCmd represents the find-deals command

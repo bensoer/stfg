@@ -2,6 +2,8 @@ package scrape
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,10 +13,21 @@ import (
 	"go.uber.org/zap"
 )
 
+// errEmbedderMissing is returned when Reconcile is called without an
+// Embedder on the options struct. The reconciler needs the embedder to
+// write flyer-item vectors that find-deals later compares against grocery
+// embeddings; running without it would silently persist items with no
+// vector, which find-deals then surfaces as an error per item.
+var errEmbedderMissing = errors.New("scrape: embedder is required on ScrapeReconcilerOptions")
+
 func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storage.StorageProvider, options ScrapeReconcilerOptions) error {
 	log := zap.S()
 
 	log.Info("Starting flyer reconciliation")
+
+	if options.Embedder == nil {
+		return errEmbedderMissing
+	}
 
 	if err := store.PruneExpired(ctx, time.Now()); err != nil {
 		return err
@@ -39,18 +52,13 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 			continue
 		}
 
-		// If the flyer already exists, there is nothing to do
-		has, err := store.HasFlyer(ctx, flyer.ID)
+		isNewFlyer, err := reconcileFlyer(ctx, store, flyer)
 		if err != nil {
 			return err
 		}
-		if has {
-			continue
-		}
 
-		log.Infof("Adding Flyer \"%s - %s\" And Its Items", flyer.Merchant, flyer.Name)
-		if err := store.AddFlyer(ctx, flyer); err != nil {
-			return err
+		if isNewFlyer {
+			log.Infof("Adding Flyer \"%s - %s\" And Its Items", flyer.Merchant, flyer.Name)
 		}
 
 		items, err := finder.FindFlyerItems(flyer.ID)
@@ -58,20 +66,158 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 			return err
 		}
 
-		for _, item := range items {
-			hasItem, err := store.HasFlyerItem(ctx, flyer.ID, item.ID)
-			if err != nil {
-				return err
-			}
-			if !hasItem {
-				if err := store.AddFlyerItem(ctx, item); err != nil {
-					return err
-				}
-			}
+		if err := reconcileFlyerItems(ctx, store, options.Embedder, flyer.ID, items); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// reconcileFlyer inserts the flyer if it is not yet stored. The returned bool
+// is true when the flyer was just added; an existing flyer is left untouched
+// so its items can still be reconciled on the current run.
+func reconcileFlyer(ctx context.Context, store storage.StorageProvider, flyer storage.Flyer) (bool, error) {
+	has, err := store.HasFlyer(ctx, flyer.ID)
+	if err != nil {
+		return false, err
+	}
+	if has {
+		return false, nil
+	}
+	if err := store.AddFlyer(ctx, flyer); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// reconcileFlyerItems upserts each scraped item against the rows already
+// stored for flyerID. New items get an embedding; existing items get a fresh
+// embedding only when the text changed (brand or name), the price, value, or
+// any of the persisted media/display fields. Price-only changes do not call
+// the embedder. Unchanged items are skipped entirely. Already-written rows
+// stay on disk when the embed call fails — the next scrape will backfill
+// their embeddings.
+func reconcileFlyerItems(
+	ctx context.Context,
+	store storage.StorageProvider,
+	embedder Embedder,
+	flyerID int64,
+	scraped []storage.FlyerItem,
+) error {
+	log := zap.S()
+
+	stored, err := store.ListFlyerItems(ctx, flyerID)
+	if err != nil {
+		return err
+	}
+	byID := make(map[int64]storage.FlyerItem, len(stored))
+	for _, it := range stored {
+		byID[it.ID] = it
+	}
+
+	var embeddedCount int
+	for _, item := range scraped {
+		text := strings.TrimSpace(item.Brand + " " + item.Name)
+		existing, existed := byID[item.ID]
+
+		if !existed {
+			embedding, err := embedItem(ctx, embedder, text)
+			if err != nil {
+				return err
+			}
+			item.Embedding = embedding
+			if err := store.AddFlyerItem(ctx, item); err != nil {
+				return err
+			}
+			if embedding != nil {
+				embeddedCount++
+			}
+			continue
+		}
+
+		storedText := strings.TrimSpace(existing.Brand + " " + existing.Name)
+		needsEmbedding := len(existing.Embedding) == 0 || storedText != text
+		var embedding []float32
+		switch {
+		case needsEmbedding && text == "":
+			// Empty text: keep the slot unembedded so find-deals knows to
+			// skip this item without erroring.
+		case needsEmbedding:
+			embedding, err = embedder.CreateGroceryEmbedding(ctx, text)
+			if err != nil {
+				return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
+			}
+			embeddedCount++
+		default:
+			embedding = existing.Embedding
+		}
+
+		if !itemChanged(existing, item, embedding) {
+			continue
+		}
+		item.Embedding = embedding
+		if err := store.UpdateFlyerItem(ctx, item); err != nil {
+			return err
+		}
+	}
+
+	if embeddedCount > 0 {
+		log.Infof("Flyer %d: embedded %d items", flyerID, embeddedCount)
+	}
+	return nil
+}
+
+// embedItem returns the embedding for text or nil when text is empty. The
+// empty-text branch is what keeps an item whose brand and name are both blank
+// from being sent to the model and from being persisted with a zero-length
+// BLOB that round-trips ambiguously.
+func embedItem(ctx context.Context, embedder Embedder, text string) ([]float32, error) {
+	if text == "" {
+		return nil, nil
+	}
+	vec, err := embedder.CreateGroceryEmbedding(ctx, text)
+	if err != nil {
+		return nil, fmt.Errorf("scrape: embed text %q: %w", text, err)
+	}
+	return vec, nil
+}
+
+// itemChanged reports whether item differs from existing on any column that
+// UpdateFlyerItem persists. Price-only changes must trigger an update but
+// must not trigger an embed (the caller already gates embedding separately).
+func itemChanged(existing, item storage.FlyerItem, embedding []float32) bool {
+	if existing.Name != item.Name {
+		return true
+	}
+	if existing.Brand != item.Brand {
+		return true
+	}
+	if existing.Price != item.Price {
+		return true
+	}
+	if existing.ImageURL != item.ImageURL {
+		return true
+	}
+	if existing.VideoURL != item.VideoURL {
+		return true
+	}
+	if existing.DisplayType != item.DisplayType {
+		return true
+	}
+	return !equalFloat32(existing.Embedding, embedding)
+}
+
+func equalFloat32(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // FlyerIsValid checks whether a flyer's validity window contains the current time.
