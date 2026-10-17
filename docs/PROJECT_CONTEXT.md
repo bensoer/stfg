@@ -54,10 +54,12 @@ Retailer filtering defaults to `fly_finder.whitelist`. Model names are hardcoded
 
 ## Data Model
 
-- **GroceryItem** — `Name`, `Embedding` (float32 vector)
+- **GroceryItem** — `Name`, `Embedding` (float32 vector, set by `add-grocery`)
 - **Flyer** — `ID`, `Merchant`, `Name`, `ValidFrom`, `ValidTo`, `Stores`
-- **FlyerItem** — `ID`, `FlyerID`, `Name`, `Brand`, `Price`, `ImageURL`, `VideoURL`, `DisplayType`
+- **FlyerItem** — `ID`, `FlyerID`, `Name`, `Brand`, `Price`, `ImageURL`, `VideoURL`, `Embedding` (float32 vector, set by `scrape-flyers`), `DisplayType`
 - **Store** — address fields for a flyer, including `PostalCode`
+
+The flyer-item embedding is written at scrape time and read at match time. `find-deals` does not embed; it compares stored vectors.
 
 ---
 

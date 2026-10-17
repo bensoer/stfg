@@ -78,11 +78,11 @@ Logs default to `stfg.log` in the process working directory (JSON). Console logs
 
 ## Command behavior
 
-`add-grocery` rejects a case-insensitive duplicate, embeds the name, and stores `GroceryItem`. The embedder model string is hardcoded in `internal/commands/addGrocery.go` as `nvidia/nemotron-3-embed-1b:free`.
+`add-grocery` rejects a case-insensitive duplicate, embeds the name, and stores `GroceryItem`. The embedder model string is the package-level constant `groceryEmbeddingModel` in `internal/commands/addGrocery.go` (`nvidia/nemotron-3-embed-1b:free`).
 
-`scrape-flyers` builds `flipp.NewFinder(nil)`, reads `fly_finder.whitelist`, and calls `scrape.Reconcile`. A flyer is kept when `merchant + " " + name` contains a whitelist entry. Expired flyers are pruned first. Existing flyer IDs are skipped.
+`scrape-flyers` looks up `"openrouter"` and the JSON store, builds `embedding.NewGroceryEmbedder` with `groceryEmbeddingModel`, and passes it on `scrape.ScrapeReconcilerOptions.Embedder`. A flyer is kept when `merchant + " " + name` contains a whitelist entry. Expired flyers are pruned first. The reconciler embeds each new or changed flyer item at scrape time: `text = strings.TrimSpace(Brand + " " + Name)`, embed when the item is new, the stored embedding is empty, or the text differs from what is stored. Empty text is not embedded and is persisted as a nil embedding. Existing flyer IDs are not re-inserted, but their items are still reconciled (the old `HasFlyer` skip is gone). Embed errors abort the scrape and leave already-written rows on disk; the next scrape backfills them. The reconciler logs one info line per flyer with the count of items it actually embedded.
 
-`find-deals` loads JSON groceries and flyers and runs an in-memory 60% cosine prefilter before the LLM call. Each flyer's items are embedded as `brand + " " + name` through `embedding.NewGroceryEmbedder` with the same model string as `add-grocery`, compared to the stored grocery embeddings through `cosinecompare.CosineCompare` (`vek32.CosineSimilarity`), and items below the cutoff are dropped from the in-memory slice. The survivors go to `promptwriter.NewPromptWriter` with `openai/gpt-4.1-nano`. Matching is an LLM prompt, not a vector search. The prompt sends flyer `id`, `brand`, `name`, and `displayType` only. The writer retries up to three times when a returned match cannot be tied to a real flyer row and grocery name. If every grocery lacks an embedding, the command stops so the user re-adds with `groceries add-grocery`. Flyer embeddings are in-memory only and are not written to storage.
+`find-deals` does not embed. It loads JSON groceries and flyers, runs the 60% cosine prefilter on stored `FlyerItem.Embedding` vs. stored `GroceryItem.Embedding` through `cosinecompare.CosineCompare` (`vek32.CosineSimilarity`), and sends the survivors to `promptwriter.NewPromptWriter` with `openai/gpt-4.1-nano`. Matching is an LLM prompt, not a vector search. The prompt sends flyer `id`, `brand`, `name`, and `displayType` only. The writer retries up to three times when a returned match cannot be tied to a real flyer row and grocery name. A grocery with no embedding is an error that tells the user to re-add it with `groceries add-grocery`; a flyer item whose text is non-empty but whose stored embedding is nil is an error that tells the user to re-run `scrape-flyers`. Empty embedding text is skipped silently.
 
 ## Where to change things
 
@@ -91,7 +91,8 @@ Logs default to `stfg.log` in the process working directory (JSON). Console logs
 | Add a command | `internal/commands/`, then `internal/bootstrap/commands.go` |
 | Register a storage or LLM backend | `internal/bootstrap/providers.go` |
 | Select which backend a command uses | the `GetStorage` / `GetProvider` key in that command |
-| Embedding or match model string | `internal/commands/addGrocery.go`, `internal/commands/findDeals.go` |
+| Embedding model string (grocery and flyer) | `internal/commands/addGrocery.go` (`groceryEmbeddingModel`) |
+| Match model string | `internal/commands/findDeals.go` (`openai/gpt-4.1-nano`) |
 | Cosine prefilter percent and library | `internal/cosinecompare/cosine_compare.go`, plus the wiring in `internal/commands/findDeals.go` |
 | Match schema and decode | `internal/provider/types.go`, `internal/provider/utils.go` |
 | Prompt text and match checks | `internal/promptwriter/prompt_writer.go` |

@@ -5,7 +5,7 @@ CLI for keeping a grocery list, scraping retailer flyers, and matching that list
 ## Prerequisites
 
 - Go 1.27 (see `go.mod`)
-- An OpenRouter API key for `add-grocery` and `find-deals`
+- An OpenRouter API key for `add-grocery`, `scrape-flyers`, and `find-deals`
 - `make`
 
 ## Setup
