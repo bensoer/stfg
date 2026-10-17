@@ -58,17 +58,17 @@ func equalFloat32(a, b []float32) bool {
 
 // newStore is a convenience for subtests: it builds a fresh backend and
 // registers a cleanup that closes it.
-func newStore(t *testing.T, factory func(*testing.T) storage.Storage) storage.Storage {
+func newStore(t *testing.T, factory func(*testing.T) storage.StorageProvider) storage.StorageProvider {
 	t.Helper()
 	s := factory(t)
 	t.Cleanup(func() { s.Close() })
 	return s
 }
 
-// TestStorageContract runs every method of storage.Storage against a fresh
+// TestStorageContract runs every method of storage.StorageProvider against a fresh
 // instance returned by factory. factory must return a new, empty backend; it
 // is called once per subtest so subtests are fully isolated.
-func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage) {
+func TestStorageContract(t *testing.T, factory func(*testing.T) storage.StorageProvider) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -448,6 +448,110 @@ func TestStorageContract(t *testing.T, factory func(*testing.T) storage.Storage)
 		err := s.RemoveFlyerItem(ctx, 10, 999)
 		if !errors.Is(err, storage.ErrNotFound) {
 			t.Fatalf("got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("FlyerItem_Embedding_RoundTrip", func(t *testing.T) {
+		s := newStore(t, factory)
+		if err := s.AddFlyer(ctx, storage.Flyer{ID: 10, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), Name: "F", Merchant: "M"}); err != nil {
+			t.Fatalf("AddFlyer: %v", err)
+		}
+		emb := mustEmbed(t, 8)
+		item := storage.FlyerItem{ID: 1, FlyerID: 10, Name: "n", Brand: "b", Embedding: emb}
+		if err := s.AddFlyerItem(ctx, item); err != nil {
+			t.Fatalf("AddFlyerItem: %v", err)
+		}
+		items, err := s.ListFlyerItems(ctx, 10)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("ListFlyerItems: err=%v len=%d", err, len(items))
+		}
+		if !equalFloat32(items[0].Embedding, emb) {
+			t.Fatalf("embedding round-trip mismatch: got %v want %v", items[0].Embedding, emb)
+		}
+	})
+
+	t.Run("FlyerItem_EmptyEmbedding_RoundTripsNil", func(t *testing.T) {
+		s := newStore(t, factory)
+		if err := s.AddFlyer(ctx, storage.Flyer{ID: 10, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), Name: "F", Merchant: "M"}); err != nil {
+			t.Fatalf("AddFlyer: %v", err)
+		}
+		if err := s.AddFlyerItem(ctx, storage.FlyerItem{ID: 1, FlyerID: 10, Name: "n"}); err != nil {
+			t.Fatalf("AddFlyerItem: %v", err)
+		}
+		items, err := s.ListFlyerItems(ctx, 10)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("ListFlyerItems: err=%v len=%d", err, len(items))
+		}
+		if items[0].Embedding != nil {
+			t.Fatalf("empty embedding read back as %v, want nil", items[0].Embedding)
+		}
+	})
+
+	t.Run("FlyerItem_UpdateFlyerItem_ReplacesFields", func(t *testing.T) {
+		s := newStore(t, factory)
+		if err := s.AddFlyer(ctx, storage.Flyer{ID: 10, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), Name: "F", Merchant: "M"}); err != nil {
+			t.Fatalf("AddFlyer: %v", err)
+		}
+		original := mustEmbed(t, 4)
+		if err := s.AddFlyerItem(ctx, storage.FlyerItem{ID: 1, FlyerID: 10, Name: "n", Brand: "b", Price: "$1.00", Embedding: original}); err != nil {
+			t.Fatalf("AddFlyerItem: %v", err)
+		}
+		replaced := mustEmbed(t, 4)
+		// Differ on every stored field so the contract catches any column
+		// the backend forgets to write.
+		for i := range replaced {
+			replaced[i] = original[i] + 1.0
+		}
+		upd := storage.FlyerItem{ID: 1, FlyerID: 10, Name: "n2", Brand: "b2", Price: "$2.00", ImageURL: "http://x", VideoURL: "http://v", DisplayType: 9, Embedding: replaced}
+		if err := s.UpdateFlyerItem(ctx, upd); err != nil {
+			t.Fatalf("UpdateFlyerItem: %v", err)
+		}
+		items, err := s.ListFlyerItems(ctx, 10)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("ListFlyerItems: err=%v len=%d", err, len(items))
+		}
+		got := items[0]
+		if got.Name != upd.Name || got.Brand != upd.Brand || got.Price != upd.Price ||
+			got.ImageURL != upd.ImageURL || got.VideoURL != upd.VideoURL || got.DisplayType != upd.DisplayType {
+			t.Fatalf("fields not replaced: got %+v", got)
+		}
+		if !equalFloat32(got.Embedding, replaced) {
+			t.Fatalf("embedding not replaced: got %v want %v", got.Embedding, replaced)
+		}
+	})
+
+	t.Run("FlyerItem_UpdateFlyerItem_MissingID_ErrNotFound", func(t *testing.T) {
+		s := newStore(t, factory)
+		if err := s.AddFlyer(ctx, storage.Flyer{ID: 10, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), Name: "F", Merchant: "M"}); err != nil {
+			t.Fatalf("AddFlyer: %v", err)
+		}
+		err := s.UpdateFlyerItem(ctx, storage.FlyerItem{ID: 999, FlyerID: 10, Name: "x"})
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("UpdateFlyerItem missing id: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("FlyerItem_UpdateFlyerItem_MissingFlyer_ErrNotFound", func(t *testing.T) {
+		s := newStore(t, factory)
+		err := s.UpdateFlyerItem(ctx, storage.FlyerItem{ID: 1, FlyerID: 999, Name: "x"})
+		if !errors.Is(err, storage.ErrNotFound) {
+			t.Fatalf("UpdateFlyerItem missing flyer: got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("FlyerItem_AddFlyerItem_Duplicate_StillReturns_ErrDuplicate", func(t *testing.T) {
+		// UpdateFlyerItem must not turn AddFlyerItem into an upsert: the
+		// duplicate path still rejects a second insert with ErrDuplicate.
+		s := newStore(t, factory)
+		if err := s.AddFlyer(ctx, storage.Flyer{ID: 10, ValidFrom: mustTime(t, "2025-01-01T00:00:00Z"), Name: "F", Merchant: "M"}); err != nil {
+			t.Fatalf("AddFlyer: %v", err)
+		}
+		if err := s.AddFlyerItem(ctx, storage.FlyerItem{ID: 1, FlyerID: 10, Name: "first"}); err != nil {
+			t.Fatalf("first AddFlyerItem: %v", err)
+		}
+		err := s.AddFlyerItem(ctx, storage.FlyerItem{ID: 1, FlyerID: 10, Name: "second"})
+		if !errors.Is(err, storage.ErrDuplicate) {
+			t.Fatalf("got %v, want ErrDuplicate", err)
 		}
 	})
 

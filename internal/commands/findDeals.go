@@ -3,23 +3,15 @@ package commands
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"stfg/internal/container"
 	"stfg/internal/cosinecompare"
-	"stfg/internal/embedding"
 	"stfg/internal/promptwriter"
 	"stfg/internal/storage"
 )
-
-// groceryEmbeddingModel is the model string used to embed flyer items for
-// cosine-similarity prefiltering. It must match the model used in
-// internal/commands/addGrocery.go so stored grocery embeddings and the
-// freshly-embedded flyer vectors live in the same coordinate space.
-const groceryEmbeddingModel = "nvidia/nemotron-3-embed-1b:free"
 
 func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 
@@ -62,27 +54,11 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 				return nil
 			}
 
-			// Warn once per grocery whose stored embedding is missing, then
-			// build a working list of groceries that already have one. The
-			// plan stops the run when no grocery has a usable embedding so
-			// the user re-adds them.
-			goodGroceries := make([]storage.GroceryItem, 0, len(groceries))
-			for _, g := range groceries {
-				if len(g.Embedding) == 0 {
-					zap.S().Warnf("Grocery %q has no embedding stored; re-add it with `groceries add-grocery` to generate one.", g.Name)
-					continue
-				}
-				goodGroceries = append(goodGroceries, g)
-			}
-			if len(goodGroceries) == 0 {
-				return fmt.Errorf("no grocery has a usable embedding; please re-add your groceries with `groceries add-grocery`")
-			}
-
-			embedder, err := embedding.NewGroceryEmbedder(provider, groceryEmbeddingModel)
-			if err != nil {
-				return fmt.Errorf("find deals: create embedder: %w", err)
-			}
-
+			// find-deals is a compare step, not an embedding step. Both the
+			// grocery and the flyer-item vectors come from storage: groceries
+			// were embedded when the user ran `groceries add-grocery`, and
+			// flyer items were embedded when the user ran `scrape-flyers`. We
+			// never re-embed here.
 			comparer, err := cosinecompare.NewCosineCompare(cosinecompare.DefaultSimilarityPercent)
 			if err != nil {
 				return fmt.Errorf("find deals: create cosine compare: %w", err)
@@ -107,7 +83,7 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 					continue
 				}
 
-				filteredItems, err := prefilterFlyerItemsBySimilarity(ctx, embedder, comparer, goodGroceries, flyerItems)
+				filteredItems, err := prefilterFlyerItemsBySimilarity(ctx, comparer, groceries, flyerItems)
 				if err != nil {
 					return err
 				}
@@ -151,33 +127,26 @@ func FindDealsCmd(container *container.ContainerRegistry) *cobra.Command {
 	}
 }
 
-// prefilterFlyerItemsBySimilarity keeps only flyer items whose brand-plus-name
-// embedding is at least as cosine-similar to any grocery embedding as comparer
-// requires. The flyer embedding is a local []float32 and is dropped before
-// this function returns. Embedding or compare errors are returned to the
-// caller; the caller decides whether to abort or to fall back.
+// prefilterFlyerItemsBySimilarity keeps only flyer items whose stored
+// brand-plus-name embedding is at least as cosine-similar to any stored
+// grocery embedding as comparer requires. Both vectors come from storage
+// (no embedder argument). Every stored flyer item carries an embedding;
+// the only failure path is an `AreCosineSimilar` length mismatch, which
+// surfaces when the embedding model was changed without wiping storage
+// first, and tells the user to re-add groceries and re-scrape.
 func prefilterFlyerItemsBySimilarity(
 	ctx context.Context,
-	embedder *embedding.GroceryEmbedder,
 	comparer *cosinecompare.CosineCompare,
 	groceries []storage.GroceryItem,
 	items []storage.FlyerItem,
 ) ([]storage.FlyerItem, error) {
 	kept := make([]storage.FlyerItem, 0, len(items))
 	for _, item := range items {
-		text := strings.TrimSpace(item.Brand + " " + item.Name)
-		if text == "" {
-			continue
-		}
-		flyerEmbedding, err := embedder.CreateGroceryEmbedding(ctx, text)
-		if err != nil {
-			return nil, fmt.Errorf("find deals: embed flyer item %d: %w", item.ID, err)
-		}
 		similar := false
 		for _, g := range groceries {
-			ok, err := comparer.AreCosineSimilar(flyerEmbedding, g.Embedding)
+			ok, err := comparer.AreCosineSimilar(item.Embedding, g.Embedding)
 			if err != nil {
-				return nil, fmt.Errorf("find deals: compare grocery %q to flyer item %d: %w", g.Name, item.ID, err)
+				return nil, fmt.Errorf("find deals: compare grocery %q to flyer item %d: re-add groceries and re-scrape so both vectors come from the current model: %w", g.Name, item.ID, err)
 			}
 			if ok {
 				similar = true

@@ -11,6 +11,14 @@ import (
 	"stfg/internal/storage"
 )
 
+// groceryEmbeddingModel is the OpenRouter model string used by both
+// add-grocery (to embed the user's grocery names) and scrape-flyers (to embed
+// the scraped flyer items). Keeping it in one place means stored grocery
+// embeddings and stored flyer embeddings live in the same coordinate space,
+// so find-deals can compare them with the cosine prefilter without
+// re-embedding either side at runtime.
+const groceryEmbeddingModel = "nvidia/nemotron-3-embed-1b:free"
+
 func AddGroceryCmd(container *container.ContainerRegistry) *cobra.Command {
 
 	return &cobra.Command{
@@ -43,7 +51,7 @@ func AddGroceryCmd(container *container.ContainerRegistry) *cobra.Command {
 
 			zap.S().Info("Getting Embedding Value For Grocery")
 
-			embedder, err := embedding.NewGroceryEmbedder(provider, "nvidia/nemotron-3-embed-1b:free")
+			embedder, err := embedding.NewGroceryEmbedder(provider, groceryEmbeddingModel)
 			if err != nil {
 				return fmt.Errorf("Failed To Create Grocery Embedding Data: %w", err)
 			}

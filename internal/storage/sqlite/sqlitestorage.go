@@ -36,7 +36,7 @@ var createTableStatements = []string{
 	`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 	`CREATE TABLE IF NOT EXISTS groceries (name TEXT PRIMARY KEY, display_name TEXT NOT NULL, embedding BLOB NOT NULL);`,
 	`CREATE TABLE IF NOT EXISTS flyers (id INTEGER PRIMARY KEY, valid_from TEXT NOT NULL, valid_to TEXT, name TEXT NOT NULL, merchant TEXT NOT NULL, stores TEXT NOT NULL DEFAULT '[]');`,
-	`CREATE TABLE IF NOT EXISTS flyer_items (flyer_id INTEGER NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER, PRIMARY KEY (flyer_id, id), FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
+	`CREATE TABLE IF NOT EXISTS flyer_items (flyer_id INTEGER NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER, embedding BLOB NOT NULL DEFAULT x'', PRIMARY KEY (flyer_id, id), FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
 	`CREATE INDEX IF NOT EXISTS idx_flyer_items_flyer_id ON flyer_items(flyer_id);`,
 	`CREATE INDEX IF NOT EXISTS idx_flyers_valid_to ON flyers(valid_to);`,
 }
@@ -494,8 +494,8 @@ func (s *SQLiteStorage) HasFlyer(ctx context.Context, id int64) (bool, error) {
 
 func (s *SQLiteStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem) error {
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO flyer_items (id, flyer_id, name, brand, price, image_url, video_url, display_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(flyer_id, id) DO NOTHING",
-		item.ID, item.FlyerID, item.Name, item.Brand, item.Price, item.ImageURL, item.VideoURL, item.DisplayType)
+		"INSERT INTO flyer_items (id, flyer_id, name, brand, price, image_url, video_url, display_type, embedding) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(flyer_id, id) DO NOTHING",
+		item.ID, item.FlyerID, item.Name, item.Brand, item.Price, item.ImageURL, item.VideoURL, item.DisplayType, embeddingToBytes(item.Embedding))
 	if err != nil {
 		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
 			return fmt.Errorf("%w: flyer %d", storage.ErrNotFound, item.FlyerID)
@@ -508,6 +508,30 @@ func (s *SQLiteStorage) AddFlyerItem(ctx context.Context, item storage.FlyerItem
 	}
 	if rows == 0 {
 		return fmt.Errorf("%w: %d", storage.ErrDuplicate, item.ID)
+	}
+	return nil
+}
+
+// UpdateFlyerItem replaces the row identified by (item.FlyerID, item.ID) with
+// the supplied FlyerItem. The foreign-key check is implicit in the SQL itself:
+// an UPDATE that targets a missing parent flyer simply matches zero rows. A
+// zero rows-affected result returns ErrNotFound; no row is inserted.
+func (s *SQLiteStorage) UpdateFlyerItem(ctx context.Context, item storage.FlyerItem) error {
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE flyer_items SET name = ?, brand = ?, price = ?, image_url = ?, video_url = ?, display_type = ?, embedding = ? WHERE flyer_id = ? AND id = ?",
+		item.Name, item.Brand, item.Price, item.ImageURL, item.VideoURL, item.DisplayType, embeddingToBytes(item.Embedding), item.FlyerID, item.ID)
+	if err != nil {
+		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+			return fmt.Errorf("%w: flyer %d", storage.ErrNotFound, item.FlyerID)
+		}
+		return fmt.Errorf("sqlite: update flyer item: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("sqlite: flyer item update rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: flyer_id=%d, item_id=%d", storage.ErrNotFound, item.FlyerID, item.ID)
 	}
 	return nil
 }
@@ -530,7 +554,7 @@ func (s *SQLiteStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int
 
 func (s *SQLiteStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]storage.FlyerItem, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, flyer_id, name, brand, price, image_url, video_url, display_type FROM flyer_items WHERE flyer_id = ? ORDER BY id",
+		"SELECT id, flyer_id, name, brand, price, image_url, video_url, display_type, embedding FROM flyer_items WHERE flyer_id = ? ORDER BY id",
 		flyerID)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: list flyer items: %w", err)
@@ -541,8 +565,9 @@ func (s *SQLiteStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]st
 	for rows.Next() {
 		var item storage.FlyerItem
 		var brand, price, imageURL, videoURL sql.NullString
+		var blob []byte
 
-		if err := rows.Scan(&item.ID, &item.FlyerID, &item.Name, &brand, &price, &imageURL, &videoURL, &item.DisplayType); err != nil {
+		if err := rows.Scan(&item.ID, &item.FlyerID, &item.Name, &brand, &price, &imageURL, &videoURL, &item.DisplayType, &blob); err != nil {
 			return nil, fmt.Errorf("sqlite: scan flyer item: %w", err)
 		}
 
@@ -550,6 +575,12 @@ func (s *SQLiteStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]st
 		item.Price = price.String
 		item.ImageURL = imageURL.String
 		item.VideoURL = videoURL.String
+
+		emb, err := bytesToEmbedding(blob)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: decode flyer item embedding: %w", err)
+		}
+		item.Embedding = emb
 
 		items = append(items, item)
 	}

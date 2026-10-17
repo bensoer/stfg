@@ -2,6 +2,7 @@ package scrape
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -15,6 +16,10 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 	log := zap.S()
 
 	log.Info("Starting flyer reconciliation")
+
+	if options.Embedder == nil {
+		return errEmbedderMissing
+	}
 
 	if err := store.PruneExpired(ctx, time.Now()); err != nil {
 		return err
@@ -44,13 +49,11 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 		if err != nil {
 			return err
 		}
-		if has {
-			continue
-		}
-
-		log.Infof("Adding Flyer \"%s - %s\" And Its Items", flyer.Merchant, flyer.Name)
-		if err := store.AddFlyer(ctx, flyer); err != nil {
-			return err
+		if !has {
+			log.Infof("Adding Flyer \"%s - %s\" And Its Items", flyer.Merchant, flyer.Name)
+			if err := store.AddFlyer(ctx, flyer); err != nil {
+				return err
+			}
 		}
 
 		items, err := finder.FindFlyerItems(flyer.ID)
@@ -58,19 +61,80 @@ func Reconcile(ctx context.Context, finder flyerfinder.FlyerFinder, store storag
 			return err
 		}
 
-		for _, item := range items {
-			hasItem, err := store.HasFlyerItem(ctx, flyer.ID, item.ID)
-			if err != nil {
-				return err
-			}
-			if !hasItem {
-				if err := store.AddFlyerItem(ctx, item); err != nil {
-					return err
-				}
-			}
+		if err := reconcileFlyerItems(ctx, store, options.Embedder, flyer.ID, items); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// reconcileFlyerItems upserts each scraped item against the rows already
+// stored for flyerID. New items are embedded and inserted; existing items
+// are re-embedded and rewritten only when the brand-plus-name text differs
+// from what is stored. Items are treated as immutable inside a flyer's
+// validity window, so the text-differs path is the only re-embed trigger in
+// practice — it covers the embedding-model-changed scenario after the
+// operator wipes storage and re-scrapes. Items with empty brand and name are
+// dropped before any I/O. An embed error aborts the scrape; already-written
+// rows stay on disk.
+func reconcileFlyerItems(
+	ctx context.Context,
+	store storage.StorageProvider,
+	embedder Embedder,
+	flyerID int64,
+	scraped []storage.FlyerItem,
+) error {
+	log := zap.S()
+
+	stored, err := store.ListFlyerItems(ctx, flyerID)
+	if err != nil {
+		return err
+	}
+	byID := make(map[int64]storage.FlyerItem, len(stored))
+	for _, it := range stored {
+		byID[it.ID] = it
+	}
+
+	var embeddedCount int
+	for _, item := range scraped {
+		text := strings.TrimSpace(item.Brand + " " + item.Name)
+		if text == "" {
+			continue
+		}
+
+		existing, existed := byID[item.ID]
+		if !existed {
+			embedding, err := embedder.CreateGroceryEmbedding(ctx, text)
+			if err != nil {
+				return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
+			}
+			item.Embedding = embedding
+			if err := store.AddFlyerItem(ctx, item); err != nil {
+				return err
+			}
+			embeddedCount++
+			continue
+		}
+
+		storedText := strings.TrimSpace(existing.Brand + " " + existing.Name)
+		if storedText == text {
+			continue
+		}
+		embedding, err := embedder.CreateGroceryEmbedding(ctx, text)
+		if err != nil {
+			return fmt.Errorf("scrape: embed flyer %d item %d: %w", flyerID, item.ID, err)
+		}
+		item.Embedding = embedding
+		if err := store.UpdateFlyerItem(ctx, item); err != nil {
+			return err
+		}
+		embeddedCount++
+	}
+
+	if embeddedCount > 0 {
+		log.Infof("Flyer %d: embedded %d items", flyerID, embeddedCount)
+	}
 	return nil
 }
 

@@ -6,6 +6,7 @@ package commands
 import (
 	"fmt"
 	"stfg/internal/container"
+	"stfg/internal/embedding"
 	"stfg/internal/flyerfinder"
 	"stfg/internal/flyerfinder/flipp"
 	"stfg/internal/reconciler/scrape"
@@ -33,6 +34,20 @@ func ScrapeFlyersCmd(container *container.ContainerRegistry) *cobra.Command {
 				return fmt.Errorf("Error initializing storage: %w", err)
 			}
 
+			provider, err := container.GetProvider(cmd.Context(), "openrouter")
+			if err != nil {
+				return fmt.Errorf("Error initializing provider: %w", err)
+			}
+
+			// The reconciler embeds each new or changed flyer item at scrape
+			// time so find-deals can compare stored vectors without
+			// re-embedding. The model string is shared with add-grocery so
+			// both sides live in the same coordinate space.
+			embedder, err := embedding.NewGroceryEmbedder(provider, groceryEmbeddingModel)
+			if err != nil {
+				return fmt.Errorf("Error creating grocery embedder: %w", err)
+			}
+
 			whitelist := viper.GetStringSlice("fly_finder.whitelist")
 			if len(whitelist) == 0 {
 				zap.S().Warn("fly_finder.whitelist is empty; no flyers will match")
@@ -41,6 +56,7 @@ func ScrapeFlyersCmd(container *container.ContainerRegistry) *cobra.Command {
 			err = scrape.Reconcile(cmd.Context(), f, store, scrape.ScrapeReconcilerOptions{
 				PostalCode:           postalCode,
 				RetailGroupWhiteList: whitelist,
+				Embedder:             embedder,
 			})
 			if err != nil {
 				return fmt.Errorf("Error Scraping Flyers: %w", err)

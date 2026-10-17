@@ -604,6 +604,44 @@ func (f *FileStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (
 	return false, nil
 }
 
+// UpdateFlyerItem replaces the row identified by (item.FlyerID, item.ID) with
+// the supplied FlyerItem. It mirrors AddFlyerItem's parent-flyer check and
+// per-path locking. A missing parent flyer or a missing matching row returns
+// ErrNotFound; no row is inserted.
+func (f *FileStorage) UpdateFlyerItem(ctx context.Context, item storage.FlyerItem) error {
+	if err := f.checkClosed(); err != nil {
+		return err
+	}
+	has, err := f.HasFlyer(ctx, item.FlyerID)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return fmt.Errorf("%w: flyer %d", storage.ErrNotFound, item.FlyerID)
+	}
+
+	path := f.flyerItemsPath(item.FlyerID)
+	mu := f.lockPath(path)
+	defer f.unlockPath(mu)
+
+	items, err := f.loadFlyerItems(path)
+	if err != nil {
+		return err
+	}
+	replaced := false
+	for i := range items {
+		if items[i].FlyerID == item.FlyerID && items[i].ID == item.ID {
+			items[i] = item
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		return fmt.Errorf("%w: %d", storage.ErrNotFound, item.ID)
+	}
+	return f.writeFile(path, items)
+}
+
 // --- Maintenance ---
 
 func (f *FileStorage) PruneExpired(ctx context.Context, now time.Time) error {

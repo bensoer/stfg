@@ -1466,7 +1466,7 @@ func sliceEqualFloat32(a, b []float32) bool {
 
 // TestStorageContract runs the cross-backend parity suite against JSON.
 func TestStorageContract(t *testing.T) {
-	parity.TestStorageContract(t, func(t *testing.T) storage.Storage {
+	parity.TestStorageContract(t, func(t *testing.T) storage.StorageProvider {
 		fs, err := NewJSONAt(context.Background(), t.TempDir())
 		if err != nil {
 			t.Fatalf("NewJSONAt: %v", err)

@@ -424,6 +424,32 @@ func (s *BoltStorage) HasFlyerItem(ctx context.Context, flyerID, itemID int64) (
 	return found, err
 }
 
+// UpdateFlyerItem overwrites the JSON payload for (flyerID, itemID) with the
+// supplied FlyerItem. A missing sub-bucket for the flyer or a missing key for
+// the item returns ErrNotFound; no row is inserted.
+func (s *BoltStorage) UpdateFlyerItem(ctx context.Context, item storage.FlyerItem) error {
+	flyerIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(flyerIDBytes, uint64(item.FlyerID))
+	itemIDBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(itemIDBytes, uint64(item.ID))
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		itemsB := tx.Bucket([]byte(bucketFlyerItems))
+		flyerB := itemsB.Bucket(flyerIDBytes)
+		if flyerB == nil {
+			return fmt.Errorf("%w: flyer=%d item=%d", storage.ErrNotFound, item.FlyerID, item.ID)
+		}
+		existing := flyerB.Get(itemIDBytes)
+		if existing == nil {
+			return fmt.Errorf("%w: flyer=%d item=%d", storage.ErrNotFound, item.FlyerID, item.ID)
+		}
+		data, err := json.Marshal(item)
+		if err != nil {
+			return fmt.Errorf("bolt: marshal flyer item: %w", err)
+		}
+		return flyerB.Put(itemIDBytes, data)
+	})
+}
+
 // PruneExpired removes flyers whose ValidTo is before now, cascading to items bucket.
 func (s *BoltStorage) PruneExpired(ctx context.Context, now time.Time) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {

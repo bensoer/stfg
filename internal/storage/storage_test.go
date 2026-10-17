@@ -257,7 +257,7 @@ func TestStore_JSONRoundTrip(t *testing.T) {
 
 // Test that mockStorage satisfies the Storage interface (compile-time check)
 func TestStorage_InterfaceContract(t *testing.T) {
-	var _ Storage = (*mockStorage)(nil)
+	var _ StorageProvider = (*mockStorage)(nil)
 }
 
 // Mock types for testing
@@ -275,6 +275,7 @@ func (m *mockStorage) GetFlyer(ctx context.Context, id int64) (*Flyer, error)   
 func (m *mockStorage) ListFlyers(ctx context.Context) ([]Flyer, error)                  { return nil, nil }
 func (m *mockStorage) HasFlyer(ctx context.Context, id int64) (bool, error)             { return false, nil }
 func (m *mockStorage) AddFlyerItem(ctx context.Context, item FlyerItem) error           { return nil }
+func (m *mockStorage) UpdateFlyerItem(ctx context.Context, item FlyerItem) error        { return nil }
 func (m *mockStorage) RemoveFlyerItem(ctx context.Context, flyerID, itemID int64) error { return nil }
 func (m *mockStorage) ListFlyerItems(ctx context.Context, flyerID int64) ([]FlyerItem, error) {
 	return nil, nil
@@ -349,11 +350,12 @@ func TestCanonicalTypes_NoDuplicates(t *testing.T) {
 	t.Logf("Current directory: %s", dir)
 	// We'll check for the canonical types in the storage package and ensure they are defined only once.
 	// We'll search for the struct definitions in the storage directory.
-	// We'll use a simple approach: read the storage.go and types.go files and count occurrences.
+	// We'll use a simple approach: read the types.go file and count occurrences.
 	// But note: the plan says to grep for "type Flyer struct", etc.
 	// We'll do that for the storage package only (internal/storage).
+	// (storage.go was removed in commit dc7fc44 when its contents were split
+	// into errors.go, utils.go, protocols.go, and types.go.)
 	files := []string{
-		"./storage.go",
 		"./types.go",
 	}
 	flyerCount := 0

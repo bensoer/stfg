@@ -29,6 +29,12 @@ type FlyerItem struct {
 	ImageURL string `json:"image_url,omitempty"`
 	VideoURL string `json:"video_url,omitempty"`
 
+	// Embedding is the float32 vector for `strings.TrimSpace(Brand + " " + Name)`
+	// produced by `internal/embedding.GroceryEmbedder` at scrape time. It is
+	// stored so that `find-deals` can compare flyer items against the user's
+	// grocery embeddings without re-embedding the same text every run.
+	Embedding []float32 `json:"embedding,omitempty"`
+
 	// DisplayType is preserved from the Flipp API for the prompt-writer, which
 	// currently sends it to the OpenRouter LLM as part of the flyer-item
 	// payload. It is not read anywhere else in the codebase.

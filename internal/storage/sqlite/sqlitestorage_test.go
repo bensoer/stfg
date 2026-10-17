@@ -64,7 +64,7 @@ func newTestStorage(t *testing.T) (*SQLiteStorage, context.Context) {
 
 // TestStorageContract runs the cross-backend parity suite against sqlite.
 func TestStorageContract(t *testing.T) {
-	parity.TestStorageContract(t, func(t *testing.T) storage.Storage {
+	parity.TestStorageContract(t, func(t *testing.T) storage.StorageProvider {
 		s, err := NewSQLite(context.Background(), SQLiteOptions{CacheDir: t.TempDir(), SQLiteFileName: "test.sqlite"})
 		if err != nil {
 			t.Fatalf("NewSQLite: %v", err)
