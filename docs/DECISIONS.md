@@ -70,6 +70,12 @@ Choices that are easy to miss from a quick read of the code.
 
 **Reason:** A missing key should fail at lookup instead of sending an empty credential. The timeout is a client default, not a per-call context deadline. `RequireParameters` tells OpenRouter to reject a route that cannot satisfy the request.
 
+## OpenAI and Ollama Send inputs
+
+**Decision:** OpenAI and Ollama `Send` return `ValidationError` when `prompt` or `model` is empty, before the client call. This is not OpenRouter `RequireParameters`. That flag only exists on OpenRouter's multi-provider route filter, and neither SDK has an equivalent.
+
+**Reason:** An empty prompt or model cannot produce a useful match. Failing locally avoids a client call that would only surface the same mistake as a transport error.
+
 ## Flipp whitelist
 
 **Decision:** Preferred retailers are the Viper default `fly_finder.whitelist`, overridable from `~/.stfg.yaml`. `scrape.Reconcile` keeps a flyer when that list's entry is a substring of `merchant + " " + name`.

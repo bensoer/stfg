@@ -59,7 +59,7 @@ Grocery names are matched with `storage.NormalizeName` (`strings.ToLower`), not 
 
 `provider.Provider` has `Send` and `Embed`. `Send` returns `[]GroceryFlyerMatch` decoded from `{"matches":[...]}`. Schema and decode live in `internal/provider/utils.go`.
 
-OpenRouter is constructed with the configured API key and a 3-minute client timeout. `Send` sets `RequireParameters`. OpenAI and Ollama implement the same interface and are registered, but no command looks them up.
+OpenRouter is constructed with the configured API key and a 3-minute client timeout. `Send` sets `RequireParameters`. OpenAI and Ollama `Send` reject an empty prompt or model before the client call. OpenAI and Ollama implement the same interface and are registered, but no command looks them up.
 
 ## Flyer scrape
 
