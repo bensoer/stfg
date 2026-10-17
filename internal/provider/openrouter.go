@@ -21,6 +21,7 @@ type OpenRouterProvider struct {
 // NewOpenRouterProvider creates a new OpenRouter provider instance.
 func NewOpenRouterProvider(opts OpenRouterOptions) (*OpenRouterProvider, error) {
 	client := openrouter.New(
+		openrouter.WithTimeout(opts.Timeout),
 		openrouter.WithSecurity(opts.APIKey),
 	)
 	return &OpenRouterProvider{
@@ -53,6 +54,10 @@ func (op *OpenRouterProvider) Send(ctx context.Context, prompt string, model str
 				},
 			),
 		},
+
+		Provider: optionalnullable.From(&components.ProviderPreferences{
+			RequireParameters: optionalnullable.From(openrouter.Pointer(true)),
+		}),
 		ResponseFormat: &format,
 	}, nil)
 	if err != nil {

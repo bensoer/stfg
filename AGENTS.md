@@ -25,6 +25,7 @@ internal/storage/                # StorageProvider, DTOs, cache dir
 internal/storage/json|sqlite|bolt/
 internal/provider/               # Provider, match schema, OpenRouter/OpenAI/Ollama
 internal/embedding/              # GroceryEmbedder over Provider.Embed
+internal/cosinecompare/          # CosineCompare over vek32.CosineSimilarity for the in-memory prefilter
 internal/promptwriter/           # match prompt, Send, validate returned rows
 internal/flyerfinder/            # FlyerFinder protocol + flipp client
 internal/reconciler/scrape/      # whitelist filter and flyer persistence
@@ -81,7 +82,7 @@ Logs default to `stfg.log` in the process working directory (JSON). Console logs
 
 `scrape-flyers` builds `flipp.NewFinder(nil)`, reads `fly_finder.whitelist`, and calls `scrape.Reconcile`. A flyer is kept when `merchant + " " + name` contains a whitelist entry. Expired flyers are pruned first. Existing flyer IDs are skipped.
 
-`find-deals` loads JSON groceries and flyers and calls `promptwriter.NewPromptWriter` with `openai/gpt-4.1-nano`. Matching is an LLM prompt, not a vector search. Stored embeddings are not read here. The prompt sends flyer `id`, `brand`, `name`, and `displayType` only. The writer retries up to three times when a returned match cannot be tied to a real flyer row and grocery name.
+`find-deals` loads JSON groceries and flyers and runs an in-memory 60% cosine prefilter before the LLM call. Each flyer's items are embedded as `brand + " " + name` through `embedding.NewGroceryEmbedder` with the same model string as `add-grocery`, compared to the stored grocery embeddings through `cosinecompare.CosineCompare` (`vek32.CosineSimilarity`), and items below the cutoff are dropped from the in-memory slice. The survivors go to `promptwriter.NewPromptWriter` with `openai/gpt-4.1-nano`. Matching is an LLM prompt, not a vector search. The prompt sends flyer `id`, `brand`, `name`, and `displayType` only. The writer retries up to three times when a returned match cannot be tied to a real flyer row and grocery name. If every grocery lacks an embedding, the command stops so the user re-adds with `groceries add-grocery`. Flyer embeddings are in-memory only and are not written to storage.
 
 ## Where to change things
 
@@ -91,6 +92,7 @@ Logs default to `stfg.log` in the process working directory (JSON). Console logs
 | Register a storage or LLM backend | `internal/bootstrap/providers.go` |
 | Select which backend a command uses | the `GetStorage` / `GetProvider` key in that command |
 | Embedding or match model string | `internal/commands/addGrocery.go`, `internal/commands/findDeals.go` |
+| Cosine prefilter percent and library | `internal/cosinecompare/cosine_compare.go`, plus the wiring in `internal/commands/findDeals.go` |
 | Match schema and decode | `internal/provider/types.go`, `internal/provider/utils.go` |
 | Prompt text and match checks | `internal/promptwriter/prompt_writer.go` |
 | Retailer whitelist default | `internal/bootstrap/config.go` (`fly_finder.whitelist`) |

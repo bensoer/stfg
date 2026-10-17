@@ -19,7 +19,9 @@ flowchart TD
     commands --> or["provider key openrouter"]
     commands --> embed["embedding.GroceryEmbedder"]
     commands --> prompt["promptwriter.PromptWriter"]
+    commands --> cosine["cosinecompare.CosineCompare"]
     commands --> scrape["reconciler/scrape.Reconcile"]
+    cosine --> vek["vek32.CosineSimilarity"]
     scrape --> flipp["flyerfinder/flipp.Client"]
     scrape --> json
     embed --> or
@@ -71,18 +73,30 @@ OpenRouter is constructed with the configured API key and a 3-minute client time
 
 `add-grocery` looks up OpenRouter, wraps it in `embedding.NewGroceryEmbedder` with model `nvidia/nemotron-3-embed-1b:free`, and stores the returned `[]float32` on `GroceryItem`. The embedder does not choose a provider or a model.
 
-`find-deals` does not compare those vectors. It loads flyer items and grocery names and calls `PromptWriter.GetFlyerItemsOnGroceryList` with model `openai/gpt-4.1-nano`. The prompt payload is `id`, `brand`, `name`, and `displayType`. Returned matches must reference a real flyer row (`id` and `name`) and a grocery name from the input. Up to three attempts are made. Failures for one flyer are logged and the loop continues. Matches are printed to stdout.
+`find-deals` first runs an in-memory cosine prefilter, then the LLM match. For each flyer, it loads the items, embeds each as `Brand + " " + Name` with the same `GroceryEmbedder` and the same model string as `add-grocery`, and compares that in-memory vector against every stored grocery embedding using `cosinecompare.CosineCompare` (a thin wrapper around `github.com/viterin/vek/vek32.CosineSimilarity`) at a 60% similarity cutoff (`cosinecompare.DefaultSimilarityPercent`). Flyer items below the cutoff are dropped from the in-memory list; their embeddings are not stored and are not put back on the `FlyerItem`. Only the survivors are passed to `PromptWriter.GetFlyerItemsOnGroceryList` with model `openai/gpt-4.1-nano`. The prompt payload is `id`, `brand`, `name`, and `displayType`. Returned matches must reference a real flyer row (`id` and `name`) and a grocery name from the input. Up to three attempts are made. Failures for one flyer are logged and the loop continues. Matches are printed to stdout.
+
+A grocery with no stored embedding is logged once and skipped during the prefilter. When every grocery lacks an embedding the command stops so the user re-adds them with `groceries add-grocery`; the model is not changed, the embeddings are. Stored vectors and freshly embedded flyer vectors must come from the same model or the length mismatch surfaces as an error.
 
 ```mermaid
 sequenceDiagram
     participant User
     participant Find as find-deals
     participant Store as JSON storage
+    participant Embed as GroceryEmbedder
+    participant Compare as CosineCompare
     participant Writer as PromptWriter
     participant LLM as OpenRouter
     User->>Find: find-deals
     Find->>Store: ListFlyers / ListGroceries / ListFlyerItems
-    Find->>Writer: GetFlyerItemsOnGroceryList
+    loop per flyer
+        loop per flyer item
+            Find->>Embed: CreateGroceryEmbedding(brand + " " + name, model)
+            Embed-->>Find: flyerEmbedding (in-memory only)
+            Find->>Compare: AreCosineSimilar(flyerEmbedding, groceryEmbedding)
+        end
+        Find->>Find: keep items at >= 60% similarity
+    end
+    Find->>Writer: GetFlyerItemsOnGroceryList(filteredItems, groceries)
     Writer->>LLM: Send(prompt, openai/gpt-4.1-nano)
     LLM-->>Writer: []GroceryFlyerMatch
     Writer->>Writer: keep only rows that exist in the inputs

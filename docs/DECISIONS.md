@@ -36,13 +36,27 @@ Choices that are easy to miss from a quick read of the code.
 
 ## Deal matching is a prompt, not a vector search
 
-**Decision:** `find-deals` does not read `GroceryItem.Embedding`. `PromptWriter` takes any `provider.Provider` plus a model name. The command passes OpenRouter and `openai/gpt-4.1-nano`.
+**Decision:** `find-deals` does not score matches itself. The match is decided by the LLM, and `PromptWriter` takes any `provider.Provider` plus a model name. The command passes OpenRouter and `openai/gpt-4.1-nano`. A cosine prefilter runs first to drop unrelated flyer items before the prompt is sent; it does not decide matches.
 
-**Reason:** After `Send` returned `[]GroceryFlyerMatch`, a local prompter interface duplicated `provider.Provider`. Leaving provider and model selection in the command avoids a factory. Vector search is not what this command does, even though embeddings are stored.
+**Reason:** After `Send` returned `[]GroceryFlyerMatch`, a local prompter interface duplicated `provider.Provider`. Leaving provider and model selection in the command avoids a factory. Vector search (a nearest-neighbour index over stored grocery vectors) was not the right tool for "is this flyer item equivalent to a shopping-list item?" even when embeddings are stored, so the LLM remains the matcher. The prefilter narrows the prompt's input but does not replace the call.
 
 **Decision:** The prompt includes flyer `id`, `brand`, `name`, and `displayType`. It does not send image URLs. The writer accepts a match only when flyer id, flyer name, and grocery name all exist on the inputs, and it retries that check up to three times.
 
 **Reason:** The model must not invent rows. Image URLs do not help that check and inflate the prompt.
+
+## Cosine prefilter before the LLM match
+
+**Decision:** `find-deals` runs a per-flyer in-memory cosine prefilter before calling the prompt writer. The filter wraps `github.com/viterin/vek/vek32.CosineSimilarity` behind `internal/cosinecompare.CosineCompare`, with `cosinecompare.DefaultSimilarityPercent = 60` as the floor. Each flyer item is embedded as `strings.TrimSpace(Brand + " " + Name)` using the same `embedding.NewGroceryEmbedder` instance and the same model string as `add-grocery` (`nvidia/nemotron-3-embed-1b:free`). An item is kept only when its in-memory vector is `>= 0.60` cosine-similar to at least one stored grocery embedding; otherwise it is dropped from the in-memory slice that goes to the prompt writer. A flyer with zero survivors skips the prompt-writer call.
+
+**Reason:** Sending every flyer row to the model bloats the prompt and pays for matches that no shopper asked for. A 60% cosine cutoff cuts most unrelated rows out without trying to be a vector database: the LLM still decides what counts as a match. Wrapping `vek32` keeps the panic-prone preconditions (empty slices, length mismatch, zero-vector NaN) behind clean returned errors that the command can wrap with flyer and grocery context.
+
+**Decision:** Flyer embeddings live only in local `[]float32` variables inside the prefilter. They are not written to storage, not cached to disk, and not added to `storage.FlyerItem`. Stored grocery embeddings are still the only vectors persisted.
+
+**Reason:** Storing flyer vectors would mean a new schema field, a migration, and drift between stored grocery vectors and freshly computed flyer vectors across model changes. Keeping them in memory is enough to gate the prompt. If the comparison fails with a length mismatch, the user must re-add groceries with `add-grocery`; the model is not changed, the embeddings are.
+
+**Decision:** The model string is hardcoded in both `add-grocery` and `find-deals` rather than in `internal/embedding`. They must match.
+
+**Reason:** A cosine score only makes sense in one coordinate space. If the two commands drift to different model strings, a length mismatch surfaces the moment `find-deals` compares; an `AreCosineSimilar` length-mismatch error is wrapped with the grocery name and flyer item ID so the operator sees which pair broke and why. Re-adding groceries with the current model is the recovery.
 
 ## Structured provider matches
 
