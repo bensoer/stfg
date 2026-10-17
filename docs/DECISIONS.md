@@ -1,67 +1,75 @@
 # Decision Log
 
-This document records important architectural decisions, deviations, and non-intuitive choices for future reference.
+Choices that are easy to miss from a quick read of the code.
 
-## Storage Abstraction
+## Composition root, not `init()`
 
-**Decision:** Implement a storage abstraction interface (`internal/storage/storage.go`) with concrete implementations for JSON file storage, SQLite, and BoltDB.
+**Decision:** `cmd/stfg/main.go` builds the Cobra root, registers loaders, and attaches subcommands. Command files export constructors. They do not register themselves in `init()`.
 
-**Reason:** Allows switching backends without changing the rest of the code. The JSON file backend is the default and most human-readable; SQLite and BoltDB are provided for performance and relational querying needs.
+**Reason:** The previous `init()` tree hid wiring and made the binary entrypoint a side effect of imports. The container is created once in `main` and passed into constructors. It is not stuffed into the Cobra context.
 
-## Embedding Model Choice
+## Registry keys, not a factory switch
 
-**Decision:** Use llama.cpp via `tcpipuk/llama-go` with the Qwen3-Embedding-0.6B model for generating grocery item embeddings.
+**Decision:** `container.ContainerRegistry` maps a string key to a loader. Callers use `GetStorage` and `GetProvider`. Constructors return concrete types (`*json.FileStorage`, `*provider.OpenRouterProvider`). Registry methods return `storage.StorageProvider` and `provider.Provider`.
 
-**Reason:** Self-contained and offline-capable. The model is downloaded on demand and stored in the `models/` directory. Context is trimmed to 1024 tokens for memory efficiency.
+**Reason:** New backends are added by registration in `internal/bootstrap/providers.go`, not by growing a switch. Commands still hardcode `"json"` and `"openrouter"`. SQLite, Bolt, OpenAI, and Ollama are registered so they can be selected later without a new abstraction.
 
-## Flyer Scraping via Flipp API
+## Storage contract
 
-**Decision:** Use the Flipp API to retrieve retail flyers for a given postal code, then filter results to a whitelist of preferred retailers.
+**Decision:** One `StorageProvider` in `internal/storage/protocols.go` covers groceries, flyers, and flyer items. There is no `internal/storage/storage.go`. JSON is the backend commands use. Cache files live in `os.UserCacheDir()/stfg`.
 
-**Reason:** Flipp provides a broad coverage of Canadian grocery flyers. Whitelisting keeps the deal list relevant to the user's typical stores.
+**Reason:** Flyer and grocery access used to be split. One interface lets the scrape reconciler and the commands share a backend. JSON stays the default because the files are inspectable. SQLite and Bolt exist for the same contract and are covered by the parity tests.
 
-## LLM-Based Matching
+**Decision:** Case-insensitive grocery identity uses `strings.ToLower` via `storage.NormalizeName`, shared by all three backends.
 
-**Decision:** Use OpenRouter for semantic matching between grocery items and flyer items.
+**Reason:** `strings.EqualFold` treats some Unicode pairs as equal that `ToLower` does not. The parity tests pin the `ToLower` behavior.
 
-**Reason:** The LLM can understand product names and context better than keyword matching alone, producing more accurate matches. The `promptwriter` package generates consistent prompts for the provider.
+## Hosted embeddings, llama.cpp removed from the build
 
-## Logging
+**Decision:** Grocery vectors come from `Provider.Embed`. The local Qwen GGUF / llama.cpp path is gone. `make` is `go build -o ./bin/stfg cmd/stfg/main.go`. Commented llama.cpp rules in the Makefile are leftovers, not the build. `make run` still points at a deleted root `main.go` and should not be used.
 
-**Decision:** Use Zap with JSON encoding for the file output and console output.
+**Reason:** llama-go was only used to embed grocery names. The provider interface already had `Embed`. Stored vectors from the old model are not migrated; add the items again before comparing them to a new model.
 
-**Reason:** Structured JSON logs are easier to parse and debug than plain text. The `--quiet` flag suppresses console output while still writing to the log file.
+**Decision:** `add-grocery` hardcodes `nvidia/nemotron-3-embed-1b:free` in the command, not in `internal/embedding` and not in Viper.
 
-**Decision:** Console Zap output goes to stderr (`cmd.ErrOrStderr()`), not stdout. Command results stay on stdout (`cmd.OutOrStdout()`). Operational failures are returned from `RunE` and logged once in `Execute`. Cobra error and usage printing is silenced so the same failure is not printed again. Library code returns errors and does not log them.
+**Reason:** The embedder should not pick a vendor or a model. The command that already chose OpenRouter owns the model string.
 
-**Reason:** Stdout has to stay pipeable. Diagnostics and results are different streams. Logging an error inside a library and again at the command boundary would show it twice.
+## Deal matching is a prompt, not a vector search
 
-## Configuration
+**Decision:** `find-deals` does not read `GroceryItem.Embedding`. `PromptWriter` takes any `provider.Provider` plus a model name. The command passes OpenRouter and `openai/gpt-4.1-nano`.
 
-**Decision:** Centralize configuration via Viper, reading from a YAML file at `~/.stfg.yaml`, environment variables prefixed with `STFG_`, and CLI flags.
+**Reason:** After `Send` returned `[]GroceryFlyerMatch`, a local prompter interface duplicated `provider.Provider`. Leaving provider and model selection in the command avoids a factory. Vector search is not what this command does, even though embeddings are stored.
 
-**Reason:** Makes the CLI easy to configure without recompiling. Default retailer whitelist is defined in the config.
+**Decision:** The prompt includes flyer `id`, `brand`, `name`, and `displayType`. It does not send image URLs. The writer accepts a match only when flyer id, flyer name, and grocery name all exist on the inputs, and it retries that check up to three times.
 
-## Data Model
+**Reason:** The model must not invent rows. Image URLs do not help that check and inflate the prompt.
 
-**Decision:** Store grocery items with their generated embedding vector, and flyers with their items as separate collections.
+## Structured provider matches
 
-**Reason:** Separating flyers from grocery items allows for efficient querying of all items within a flyer when finding deals.
+**Decision:** Every `Send` implementation asks for one JSON object, `{"matches":[...]}`, and returns `[]GroceryFlyerMatch`. Decoding sits next to the schema in `internal/provider/utils.go`.
 
-## Structured Provider Matches
+**Reason:** OpenAI strict structured outputs need a root object. Callers still receive the inner slice. A generic `Send[T]` was rejected because this program has one response shape.
 
-**Decision:** `Provider.Send` returns `[]GroceryFlyerMatch` for every backend. The model is asked for one JSON object, `{"matches":[...]}`, not a bare array and not free text. OpenAI, Ollama, and OpenRouter all receive that same schema. Decoding lives next to the schema in the provider package so the three SDKs cannot drift.
+## OpenRouter client
 
-**Reason:** The only model call in the program has one response shape. A generic `Send[T]` was rejected. OpenAI strict structured outputs need a root object, so the wire format is an envelope even though callers receive the inner slice.
+**Decision:** The OpenRouter loader requires `providers.openrouter.api_key` (env `STFG_PROVIDERS_OPENROUTER_API_KEY`). The client timeout is 3 minutes, set in `RegisterProviders`. `Send` sets provider `RequireParameters`. The API key is not logged.
 
-## Provider-Agnostic Prompt Writer
+**Reason:** A missing key should fail at lookup instead of sending an empty credential. The timeout is a client default, not a per-call context deadline. `RequireParameters` tells OpenRouter to reject a route that cannot satisfy the request.
 
-**Decision:** `PromptWriter` depends on `provider.Provider` directly. The model name is a constructor argument. `find-deals` passes `NewOpenRouterProvider` and `openrouter/free`. There is no local prompter interface and no OpenRouter-specific writer type.
+## Flipp whitelist
 
-**Reason:** After `Send` returned `[]GroceryFlyerMatch`, the local interface duplicated `provider.Provider` and the writer hardcoded one model. Keeping provider choice at the command leaves OpenAI and Ollama unwired until a caller needs them, without a factory.
+**Decision:** Preferred retailers are the Viper default `fly_finder.whitelist`, overridable from `~/.stfg.yaml`. `scrape.Reconcile` keeps a flyer when that list's entry is a substring of `merchant + " " + name`.
 
-## Provider-Backed Grocery Embeddings
+**Reason:** The whitelist is configuration, not a slice in the command file. Substring matching tolerates Flipp names that include extra words around the retailer.
 
-**Decision:** Grocery embeddings now come from `Provider.Embed`. The `internal/models` package — which loaded a local Qwen GGUF through llama.cpp — is gone. `add-grocery` constructs `NewOpenRouterProvider` from the `api_key` viper key (falling back to the `--api-key` / `-a` flag) and hardcodes the model `openai/text-embedding-3-small` on `NewGroceryEmbedder`. The model string lives in the command, not in `internal/embedding`.
+## Logging and stdout
 
-**Reason:** The llama.cpp path was the only Go call site for `tcpipuk/llama-go`. With `Provider.Embed` available on OpenAI, Ollama, and OpenRouter, embeddings can use the same plumbing as `find-deals` and the program no longer ships a GGUF loader in Go. Stored Qwen vectors are not migrated: a re-embedding run is required to compare against the new model. The `Makefile` still builds llama.cpp because `make` remains the documented build entrypoint, but that build is no longer consumed by this package.
+**Decision:** Zap JSON goes to `stfg.log` unless `--log-file` is set. Console Zap goes to the command stderr. Results go to stdout. Cobra usage and error printing are silenced. `main` logs the `Execute` error once on stderr.
+
+**Reason:** Stdout has to stay pipeable. Logging the same failure in a library and again at the boundary double-prints it.
+
+## Configuration shape
+
+**Decision:** There is no top-level `api_key` and no `--api-key` flag. Provider and storage settings are nested Viper keys under `providers.*` and `storage.*`, with `STFG_` env overrides.
+
+**Reason:** More than one provider and more than one backend need their own settings. A single `api_key` flag could not name which provider it belonged to.
