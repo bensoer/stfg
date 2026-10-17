@@ -177,6 +177,70 @@ func TestMigrate_LegacyDBWithoutDisplayName(t *testing.T) {
 	}
 }
 
+// A flyer_items table created before the embedding column existed must be
+// upgraded in place by Migrate and the existing row must read back with a nil
+// embedding so find-deals can prompt the user to re-run scrape-flyers instead
+// of silently treating the row as a zero vector. Mirrors the groceries
+// display_name legacy test above.
+func TestMigrate_LegacyFlyerItemsWithoutEmbedding(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "legacy-flyer-items.sqlite")
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	stmts := []string{
+		`CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		`INSERT INTO schema_version (version) VALUES (1);`,
+		`CREATE TABLE flyers (id INTEGER PRIMARY KEY, valid_from TEXT NOT NULL, valid_to TEXT, name TEXT NOT NULL, merchant TEXT NOT NULL, stores TEXT NOT NULL DEFAULT '[]');`,
+		`INSERT INTO flyers (id, valid_from, name, merchant) VALUES (10, '2025-01-01T00:00:00Z', 'F', 'M');`,
+		// Pre-embedding flyer_items schema: no embedding column.
+		`CREATE TABLE flyer_items (flyer_id INTEGER NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, brand TEXT, price TEXT, image_url TEXT, video_url TEXT, display_type INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (flyer_id, id), FOREIGN KEY (flyer_id) REFERENCES flyers(id) ON DELETE CASCADE);`,
+		`INSERT INTO flyer_items (flyer_id, id, name) VALUES (10, 1, 'legacy');`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			db.Close()
+			t.Fatalf("legacy setup %q: %v", stmt, err)
+		}
+	}
+	db.Close()
+
+	ctx := context.Background()
+	fs, err := NewSQLite(ctx, SQLiteOptions{CacheDir: tmpDir, SQLiteFileName: "legacy-flyer-items.sqlite"})
+	if err != nil {
+		t.Fatalf("NewSQLite on legacy db: %v", err)
+	}
+	defer fs.Close()
+
+	items, err := fs.ListFlyerItems(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListFlyerItems after upgrade: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 legacy row, got %d", len(items))
+	}
+	if items[0].Name != "legacy" {
+		t.Fatalf("legacy row name = %q (want legacy)", items[0].Name)
+	}
+	if items[0].Embedding != nil {
+		t.Fatalf("legacy row embedding = %v, want nil", items[0].Embedding)
+	}
+	// A fresh insert on the upgraded table must round-trip an embedding.
+	if err := fs.AddFlyerItem(ctx, storage.FlyerItem{ID: 2, FlyerID: 10, Name: "new", Embedding: mustEmbed(t, 3)}); err != nil {
+		t.Fatalf("AddFlyerItem after upgrade: %v", err)
+	}
+	items, _ = fs.ListFlyerItems(ctx, 10)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items after add, got %d", len(items))
+	}
+	// Re-migrate must be a no-op.
+	if err := fs.Migrate(ctx); err != nil {
+		t.Fatalf("re-Migrate: %v", err)
+	}
+}
+
 func TestListGroceries_OrderedByLowercasedNameAndPreservesDisplayCase(t *testing.T) {
 	fs, ctx := newTestStorage(t)
 
